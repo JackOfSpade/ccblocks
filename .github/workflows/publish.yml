@@ -130,14 +130,19 @@ jobs:
       # real stable stanza; add one by hand once, then bumps work normally.
       - name: Check Homebrew tap formula readiness
         id: tap_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FORMULA_CONTENT=$(curl -fsSL "https://raw.githubusercontent.com/jackofspade/homebrew-tap/master/Formula/ccblocks.rb")
-
-          if echo "$FORMULA_CONTENT" | grep -qE '^\s*url\s+"'; then
-            echo "has_stable=true" >> "$GITHUB_OUTPUT"
+          if FORMULA_CONTENT=$(gh api repos/jackofspade/homebrew-tap/contents/Formula/ccblocks.rb --jq '.content' | base64 -d); then
+            if echo "$FORMULA_CONTENT" | grep -qE '^\s*url\s+"'; then
+              echo "has_stable=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "has_stable=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::Formula/ccblocks.rb in jackofspade/homebrew-tap only has a head block (no stable url/sha256 yet). Skipping the Homebrew publish steps for v${{ needs.validate.outputs.version }}: dawidd6/action-homebrew-bump-formula requires an existing stable spec to bump and will crash on a head-only formula. Add a real url + sha256 stanza to the formula by hand once (the v${{ needs.validate.outputs.version }} release tarball now exists at https://github.com/${{ github.repository }}/archive/refs/tags/v${{ needs.validate.outputs.version }}.tar.gz), then future VERSION bumps will publish to the tap automatically."
+            fi
           else
             echo "has_stable=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Formula/ccblocks.rb in jackofspade/homebrew-tap only has a head block (no stable url/sha256 yet). Skipping the Homebrew publish steps for v${{ needs.validate.outputs.version }}: dawidd6/action-homebrew-bump-formula requires an existing stable spec to bump and will crash on a head-only formula. Add a real url + sha256 stanza to the formula by hand once (the v${{ needs.validate.outputs.version }} release tarball now exists at https://github.com/${{ github.repository }}/archive/refs/tags/v${{ needs.validate.outputs.version }}.tar.gz), then future VERSION bumps will publish to the tap automatically."
+            echo "::warning::Could not read Formula/ccblocks.rb from jackofspade/homebrew-tap (API/network error) to check for a stable spec. Skipping the Homebrew publish steps for v${{ needs.validate.outputs.version }} as a precaution rather than risk crashing dawidd6/action-homebrew-bump-formula against an unknown formula state."
           fi
 
       - name: Publish to Homebrew tap
