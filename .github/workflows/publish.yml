@@ -123,7 +123,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # dawidd6/action-homebrew-bump-formula (and the `brew bump-formula-pr`
+      # it wraps) can only bump an existing stable url/sha256 spec - it
+      # crashes (NoMethodError on a nil stable spec) against a head-only
+      # formula. Skip it with a clear message until the tap formula has a
+      # real stable stanza; add one by hand once, then bumps work normally.
+      - name: Check Homebrew tap formula readiness
+        id: tap_check
+        run: |
+          FORMULA_CONTENT=$(curl -fsSL "https://raw.githubusercontent.com/jackofspade/homebrew-tap/master/Formula/ccblocks.rb")
+
+          if echo "$FORMULA_CONTENT" | grep -qE '^\s*url\s+"'; then
+            echo "has_stable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_stable=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Formula/ccblocks.rb in jackofspade/homebrew-tap only has a head block (no stable url/sha256 yet). Skipping the Homebrew publish steps for v${{ needs.validate.outputs.version }}: dawidd6/action-homebrew-bump-formula requires an existing stable spec to bump and will crash on a head-only formula. Add a real url + sha256 stanza to the formula by hand once (the v${{ needs.validate.outputs.version }} release tarball now exists at https://github.com/${{ github.repository }}/archive/refs/tags/v${{ needs.validate.outputs.version }}.tar.gz), then future VERSION bumps will publish to the tap automatically."
+          fi
+
       - name: Publish to Homebrew tap
+        if: steps.tap_check.outputs.has_stable == 'true'
         uses: dawidd6/action-homebrew-bump-formula@1446dca236b0440c6f02723a3f14f13be2c04ab0 # v7
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -132,6 +150,7 @@ jobs:
           tag: v${{ needs.validate.outputs.version }}
 
       - name: Auto-merge Homebrew tap PR
+        if: steps.tap_check.outputs.has_stable == 'true'
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
