@@ -22,7 +22,8 @@ command_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
 
-# Timeout handling (timeout or gtimeout required)
+# Timeout handling. Prefers timeout/gtimeout (GNU coreutils); falls back to
+# perl or python3 (both enforce the timeout, unlike the last-resort branch).
 run_with_timeout() {
 	local duration="$1"
 	shift
@@ -31,9 +32,35 @@ run_with_timeout() {
 		timeout "$duration" "$@"
 	elif command_exists gtimeout; then
 		gtimeout "$duration" "$@"
+	elif command_exists perl; then
+		# alarm() survives exec(), so SIGALRM still fires against the
+		# replaced process image if it outlives the timeout.
+		perl -e '
+			alarm(shift @ARGV);
+			exec @ARGV or exit 127;
+		' "$duration" "$@"
+	elif command_exists python3; then
+		python3 - "$duration" "$@" <<'PY'
+import subprocess
+import sys
+
+duration = float(sys.argv[1])
+cmd = sys.argv[2:]
+
+proc = subprocess.Popen(cmd)
+try:
+    sys.exit(proc.wait(timeout=duration))
+except subprocess.TimeoutExpired:
+    proc.kill()
+    proc.wait()
+    sys.exit(124)
+PY
 	else
-		# No timeout available - run without timeout control
-		# This is acceptable for most use cases
+		# No timeout utility available at all - run without timeout
+		# control. Unlike the perl/python3 fallbacks above, this path
+		# enforces nothing, so make the gap visible instead of silent.
+		print_warning "No timeout utility available (install coreutils, perl, or python3); running '$1' without an enforced timeout"
+		log_to_system "run_with_timeout: no timeout utility available; ran '$1' without an enforced timeout"
 		"$@"
 	fi
 }

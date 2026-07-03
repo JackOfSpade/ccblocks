@@ -1,6 +1,6 @@
 # ccblocks
 
-[![CI](https://github.com/designorant/ccblocks/actions/workflows/test.yml/badge.svg)](https://github.com/designorant/ccblocks/actions/workflows/test.yml)
+[![CI](https://github.com/JackOfSpade/ccblocks/actions/workflows/test.yml/badge.svg)](https://github.com/JackOfSpade/ccblocks/actions/workflows/test.yml)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](README.md#platform-support)
 
 ```sh
@@ -55,22 +55,17 @@ Time-shift Claude sessions to match your working hours
 
 ```bash
 # Install via Homebrew
-brew install designorant/tap/ccblocks
+brew install jackofspade/tap/ccblocks
 
 # Run setup
 ccblocks setup
 ```
 
-### Path to Official Homebrew
+### Homebrew Distribution
 
-ccblocks is currently distributed via a [personal Homebrew tap](https://github.com/designorant/homebrew-tap/blob/master/Formula/ccblocks.rb). Once the project reaches sufficient popularity, it will be submitted to the official Homebrew repository for easier installation (just `brew install ccblocks`).
+This fork is distributed via its own [personal Homebrew tap](https://github.com/JackOfSpade/homebrew-tap/blob/master/Formula/ccblocks.rb), independent of the upstream [designorant/ccblocks](https://github.com/designorant/ccblocks) tap.
 
-**Requirements for official inclusion** ([per Homebrew guidelines](https://docs.brew.sh/Acceptable-Formulae#niche-or-self-submitted-stuff)):
-- ≥30 forks, ≥30 watchers, **or** ≥75 stars
-
-If you find ccblocks useful, starring the repository helps us reach this milestone!
-
-**Platform Support:** macOS and Linux only. Windows is not currently supported ([contribute!](https://github.com/designorant/ccblocks/issues)).
+**Platform Support:** macOS and Linux only. Windows is not currently supported ([contribute!](https://github.com/JackOfSpade/ccblocks/issues)).
 
 ## Schedules
 
@@ -239,9 +234,8 @@ rm -rf ~/.config/ccblocks
 
 ## Getting Help
 
-- **Questions**: Ask in [GitHub Discussions](https://github.com/designorant/ccblocks/discussions)
-- **Issues**: Report bugs on [GitHub Issues](https://github.com/designorant/ccblocks/issues)
-- **Contact**: [@designorant on X](https://x.com/designorant) or [@designorant.com on BlueSky](https://bsky.app/profile/designorant.com)
+- **Issues**: Report bugs on [GitHub Issues](https://github.com/JackOfSpade/ccblocks/issues) (this fork) or [upstream](https://github.com/designorant/ccblocks/issues)
+- **Upstream questions/contact**: [GitHub Discussions](https://github.com/designorant/ccblocks/discussions), [@designorant on X](https://x.com/designorant), or [@designorant.com on BlueSky](https://bsky.app/profile/designorant.com)
 
 ## Contributing
 
@@ -250,3 +244,5 @@ Contributions are welcome! For local development, testing, and contribution guid
 ## License
 
 [MIT](LICENSE) © [@designorant](https://github.com/designorant)
+
+This is a fork maintained by [@JackOfSpade](https://github.com/JackOfSpade); see the [LICENSE](LICENSE) for terms.

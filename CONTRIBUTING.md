@@ -6,7 +6,7 @@ Thank you for your interest in contributing to ccblocks! This guide will help yo
 
 ```bash
 # Clone the repository
-git clone git@github.com:designorant/ccblocks.git
+git clone git@github.com:JackOfSpade/ccblocks.git
 cd ccblocks
 
 # Install development dependencies (bats-core, bats-support, bats-assert, shellcheck, shfmt)
@@ -37,8 +37,8 @@ The following steps are generic and work for all contributors. They assume you h
 
 ```bash
 # Clone the repositories
-git clone git@github.com:designorant/ccblocks.git
-git clone git@github.com:designorant/homebrew-tap.git
+git clone git@github.com:JackOfSpade/ccblocks.git
+git clone git@github.com:JackOfSpade/homebrew-tap.git
 
 # Point these variables at your clones (use absolute paths)
 export CCBLOCKS_DIR="/absolute/path/to/ccblocks"
@@ -51,10 +51,10 @@ There are two recommended approaches:
 
 ```bash
 # Make Homebrew read from your local tap clone
-brew untap designorant/tap 2>/dev/null || true
+brew untap jackofspade/tap 2>/dev/null || true
 
 # Determine where Homebrew keeps taps (works on macOS and Linux)
-export TAP_PATH="$(brew --repository)/Library/Taps/designorant/homebrew-tap"
+export TAP_PATH="$(brew --repository)/Library/Taps/jackofspade/homebrew-tap"
 mkdir -p "$(dirname "$TAP_PATH")"
 ln -sfn "$TAP_DIR" "$TAP_PATH"
 
@@ -84,11 +84,11 @@ openssl dgst -sha256 /tmp/ccblocks-test.tar.gz | awk '{print $2}'
 ```bash
 # Clean reinstall from your local tap/formula
 brew uninstall ccblocks 2>/dev/null || true
-brew install --build-from-source designorant/tap/ccblocks
+brew install --build-from-source jackofspade/tap/ccblocks
 
 # Basic verification
 ccblocks --version
-brew test designorant/tap/ccblocks
+brew test jackofspade/tap/ccblocks
 
 # After testing, revert the temporary URL/SHA change before committing
 git -C "$TAP_DIR" checkout -- Formula/ccblocks.rb
@@ -97,8 +97,8 @@ git -C "$TAP_DIR" checkout -- Formula/ccblocks.rb
 #### Quick Install Test (no local changes)
 
 ```bash
-brew install designorant/tap/ccblocks
-brew test designorant/tap/ccblocks
+brew install jackofspade/tap/ccblocks
+brew test jackofspade/tap/ccblocks
 ```
 
 ### Development Workflow
@@ -303,7 +303,7 @@ Releases are **automated via GitHub Actions** when the VERSION file is updated o
    - ✅ Creates GitHub Release with notes
    - ✅ Updates Homebrew tap automatically
 
-**Note for maintainers:** The workflow requires a `HOMEBREW_TAP_TOKEN` secret (fine-grained GitHub PAT with write access to `designorant/homebrew-tap`) to be configured in the repository settings.
+**Note for maintainers:** The workflow requires a `HOMEBREW_TAP_TOKEN` secret (fine-grained GitHub PAT with write access to `jackofspade/homebrew-tap`) to be configured in the repository settings.
 
 ## Testing Before Submission
 
@@ -330,9 +330,8 @@ Before submitting a pull request, ensure:
 
 ## Getting Help
 
-- **Questions**: Ask in [GitHub Discussions](https://github.com/designorant/ccblocks/discussions)
-- **Issues**: Report bugs or request features on [GitHub Issues](https://github.com/designorant/ccblocks/issues)
-- **Contact**: [@designorant on X](https://x.com/designorant) or [@designorant.com on BlueSky](https://bsky.app/profile/designorant.com)
+- **Issues**: Report bugs or request features on [GitHub Issues](https://github.com/JackOfSpade/ccblocks/issues) (this fork)
+- **Upstream questions/contact**: [GitHub Discussions](https://github.com/designorant/ccblocks/discussions), [@designorant on X](https://x.com/designorant), or [@designorant.com on BlueSky](https://bsky.app/profile/designorant.com)
 
 ## Windows Support
 

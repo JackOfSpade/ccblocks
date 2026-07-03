@@ -128,7 +128,7 @@ jobs:
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           formula: ccblocks
-          tap: designorant/homebrew-tap
+          tap: jackofspade/homebrew-tap
           tag: v${{ needs.validate.outputs.version }}
 
       - name: Auto-merge Homebrew tap PR
@@ -141,14 +141,14 @@ jobs:
 
           # Find and merge the bump PR
           PR_NUMBER=$(gh pr list \
-            --repo designorant/homebrew-tap \
+            --repo jackofspade/homebrew-tap \
             --head "bump-ccblocks-${VERSION}" \
             --json number \
             --jq '.[0].number // empty')
 
           if [ -n "$PR_NUMBER" ]; then
             gh pr merge "$PR_NUMBER" \
-              --repo designorant/homebrew-tap \
+              --repo jackofspade/homebrew-tap \
               --squash \
               --subject "chore: bump ccblocks to ${VERSION}" \
               --body ""

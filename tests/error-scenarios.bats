@@ -177,7 +177,69 @@ EOF
     run "${TEST_TEMP_DIR}/test_timeout_none.sh"
     assert_success
     assert_output --partial "no timeout available"
-    # Should also show warning about no timeout utility
+    assert_output --partial "No timeout utility available"
+}
+
+@test "common.sh run_with_timeout perl fallback actually kills a hung command" {
+    cat > "${TEST_TEMP_DIR}/test_timeout_perl_enforce.sh" << 'EOF'
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
+
+command_exists() {
+    case "$1" in
+        timeout|gtimeout) return 1 ;;
+        perl) return 0 ;;
+        *) command -v "$1" >/dev/null 2>&1 ;;
+    esac
+}
+export -f command_exists
+
+start=$(date +%s)
+run_with_timeout 1 sleep 5
+rc=$?
+elapsed=$(( $(date +%s) - start ))
+
+echo "rc=$rc elapsed=$elapsed"
+[ "$rc" -ne 0 ] && [ "$elapsed" -lt 4 ]
+EOF
+    chmod +x "${TEST_TEMP_DIR}/test_timeout_perl_enforce.sh"
+
+    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
+
+    run "${TEST_TEMP_DIR}/test_timeout_perl_enforce.sh"
+    assert_success
+}
+
+@test "common.sh run_with_timeout python3 fallback actually kills a hung command" {
+    cat > "${TEST_TEMP_DIR}/test_timeout_python_enforce.sh" << 'EOF'
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
+
+command_exists() {
+    case "$1" in
+        timeout|gtimeout|perl) return 1 ;;
+        python3) return 0 ;;
+        *) command -v "$1" >/dev/null 2>&1 ;;
+    esac
+}
+export -f command_exists
+
+start=$(date +%s)
+run_with_timeout 1 sleep 5
+rc=$?
+elapsed=$(( $(date +%s) - start ))
+
+echo "rc=$rc elapsed=$elapsed"
+[ "$rc" -ne 0 ] && [ "$elapsed" -lt 4 ]
+EOF
+    chmod +x "${TEST_TEMP_DIR}/test_timeout_python_enforce.sh"
+
+    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
+
+    run "${TEST_TEMP_DIR}/test_timeout_python_enforce.sh"
+    assert_success
 }
 
 # Empty/missing file scenarios
