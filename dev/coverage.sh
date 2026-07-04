@@ -114,13 +114,25 @@ analyze_script_coverage() {
 		script_name=$(basename "$script")
 		total=$((total + 1))
 
-		# A script is "covered" if some .bats file actually exercises it
-		# (references its bin/<name> path) - the test files here don't
-		# follow a 1:1 filename convention (e.g. status.sh is tested by
-		# check-status.bats, schedule.sh by schedule-blocks.bats), so
-		# matching on the test file's own name would always miss.
-		local covering_tests
-		covering_tests=$(grep -l "bin/${script_name}" "$PROJECT_ROOT"/tests/*.bats 2>/dev/null | xargs -n1 basename 2>/dev/null | paste -sd, -)
+		# A script is "covered" if some .bats file actually references it
+		# by name - the test files here don't follow a 1:1 filename
+		# convention (e.g. status.sh is tested by check-status.bats,
+		# schedule.sh by schedule-blocks.bats), so matching on the test
+		# file's own name would always miss. Built as a portable
+		# while-loop rather than xargs/basename -a (which differ between
+		# GNU and BSD, and can misbehave on zero matches) and explicitly
+		# tolerates zero matches instead of letting a bare `grep -l`
+		# "no match" exit status kill the script under `set -e`.
+		local covering_tests="" match_file
+		while IFS= read -r match_file; do
+			[ -n "$match_file" ] || continue
+			if [ -n "$covering_tests" ]; then
+				covering_tests="${covering_tests},$(basename "$match_file")"
+			else
+				covering_tests="$(basename "$match_file")"
+			fi
+		done < <(grep -l "$script_name" "$PROJECT_ROOT"/tests/*.bats 2>/dev/null || true)
+
 		if [ -n "$covering_tests" ]; then
 			covered=$((covered + 1))
 			print_success "$script_name ($covering_tests)"
