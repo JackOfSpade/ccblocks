@@ -4,6 +4,7 @@
 # Complete and safe removal of scheduler (LaunchAgent/systemd) and components
 
 set -euo pipefail
+set -E
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source common library
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
+
+install_err_trap "Common fixes: ensure the scheduler helper and its config directory are readable."
 
 # Detect OS and initialise OS-specific variables
 detect_os || exit 1
@@ -92,7 +95,7 @@ remove_scheduler() {
 fallback_cleanup() {
 	if [[ "$OS_TYPE" == "Darwin" ]]; then
 		# macOS: Unload and remove LaunchAgent
-		local plist_path="$HOME/Library/LaunchAgents/ccblocks.plist"
+		local plist_path="$CONFIG_PATH"
 
 		if [ -f "$plist_path" ]; then
 			# Try to unload if loaded
@@ -109,8 +112,8 @@ fallback_cleanup() {
 
 	elif [[ "$OS_TYPE" == "Linux" ]]; then
 		# Linux: Disable/stop timer and remove systemd files
-		local service_file="$HOME/.config/systemd/user/ccblocks@.service"
-		local timer_file="$HOME/.config/systemd/user/ccblocks@.timer"
+		local service_file="$CONFIG_PATH"
+		local timer_file="$TIMER_PATH"
 
 		# Try to stop and disable timer
 		if systemctl --user is-active "ccblocks@default.timer" &>/dev/null; then
@@ -219,7 +222,7 @@ prompt_config_removal() {
 	echo ""
 	read -r -p "Remove configuration directory? [Y/n]: " confirm
 
-	if [[ "$confirm" =~ ^[Nn]$ ]]; then
+	if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
 		print_status "Configuration preserved at: $CCBLOCKS_CONFIG"
 		echo "You can manually remove it later with: rm -rf $CCBLOCKS_CONFIG"
 		echo ""
@@ -399,7 +402,7 @@ main() {
 		print_warning "This will remove the ccblocks $SCHEDULER_NAME"
 		read -r -p "Proceed with uninstallation? [Y/n]: " confirm
 
-		if [[ "$confirm" =~ ^[Nn]$ ]]; then
+		if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
 			print_status "Uninstallation cancelled"
 			exit 0
 		fi

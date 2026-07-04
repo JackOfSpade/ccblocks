@@ -6,9 +6,16 @@ load test_helper
 
 setup() {
     setup_test_dir
-    SCRIPT="${PROJECT_ROOT}/libexec/bin/schedule.sh"
 
-    # Create mock helper for integration tests
+    # Copy libexec into the sandbox so mocking the OS helper below never
+    # touches the real repository file - this is safe regardless of how
+    # the test ends (pass, fail, or killed mid-run), unlike mutating the
+    # real file in place and restoring it afterwards.
+    MOCK_LIBEXEC="${TEST_TEMP_DIR}/libexec"
+    cp -r "${PROJECT_ROOT}/libexec" "$MOCK_LIBEXEC"
+    SCRIPT="${MOCK_LIBEXEC}/bin/schedule.sh"
+
+    # Create mock helper for integration tests (inside the sandboxed copy)
     create_mock_helper
 
     # Isolate config writes to test temp directory
@@ -17,24 +24,18 @@ setup() {
 }
 
 teardown() {
-    restore_mock_helper
     teardown_test_dir
 }
 
 # Helper functions for mocking
 create_mock_helper() {
-    local helper_dir="${PROJECT_ROOT}/libexec/lib"
+    local helper_dir="${MOCK_LIBEXEC}/lib"
     local helper_name
 
     if [[ "$(uname)" == "Darwin" ]]; then
         helper_name="launchagent-helper.sh"
     else
         helper_name="systemd-helper.sh"
-    fi
-
-    # Backup original if exists
-    if [ -f "${helper_dir}/${helper_name}" ]; then
-        cp "${helper_dir}/${helper_name}" "${TEST_TEMP_DIR}/${helper_name}.backup"
     fi
 
     # Create mock that handles schedule commands
@@ -67,22 +68,6 @@ case "$1" in
 esac
 EOF
     chmod +x "${helper_dir}/${helper_name}"
-}
-
-restore_mock_helper() {
-    local helper_dir="${PROJECT_ROOT}/libexec/lib"
-    local helper_name
-
-    if [[ "$(uname)" == "Darwin" ]]; then
-        helper_name="launchagent-helper.sh"
-    else
-        helper_name="systemd-helper.sh"
-    fi
-
-    # Restore from backup
-    if [ -f "${TEST_TEMP_DIR}/${helper_name}.backup" ]; then
-        mv "${TEST_TEMP_DIR}/${helper_name}.backup" "${helper_dir}/${helper_name}"
-    fi
 }
 
 # Help and usage tests

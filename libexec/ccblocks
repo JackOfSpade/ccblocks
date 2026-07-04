@@ -71,10 +71,8 @@ main() {
 		exec "$SCRIPT_DIR/bin/status.sh" "$@"
 		;;
 	"trigger")
-		# Detect OS and initialize variables to find helper
-		detect_os || exit 1
-		init_os_vars "$SCRIPT_DIR" || exit 1
-		exec "$HELPER" start
+		shift
+		exec "$SCRIPT_DIR/bin/trigger.sh" "$@"
 		;;
 	"schedule")
 		shift

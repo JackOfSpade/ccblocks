@@ -127,6 +127,54 @@ teardown() {
     assert_output --partial "gaps=9"
 }
 
+# preset_hours / preset_weekdays tests
+
+@test "preset_hours: returns 247 preset hours" {
+    run preset_hours "247"
+    assert_success
+    assert_output "0 6 12 18"
+}
+
+@test "preset_hours: returns work preset hours" {
+    run preset_hours "work"
+    assert_success
+    assert_output "9 14"
+}
+
+@test "preset_hours: returns night preset hours" {
+    run preset_hours "night"
+    assert_success
+    assert_output "18 23"
+}
+
+@test "preset_hours: fails for unknown schedule name" {
+    run preset_hours "bogus"
+    assert_failure
+}
+
+@test "preset_weekdays: 247 applies every day (empty)" {
+    run preset_weekdays "247"
+    assert_success
+    assert_output ""
+}
+
+@test "preset_weekdays: night applies every day (empty)" {
+    run preset_weekdays "night"
+    assert_success
+    assert_output ""
+}
+
+@test "preset_weekdays: work is Monday-Friday using ISO weekday numbers" {
+    run preset_weekdays "work"
+    assert_success
+    assert_output "1 2 3 4 5"
+}
+
+@test "preset_weekdays: fails for unknown schedule name" {
+    run preset_weekdays "bogus"
+    assert_failure
+}
+
 # write_schedule_config and read_schedule_config tests
 
 @test "write_schedule_config: creates preset config" {

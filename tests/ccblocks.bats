@@ -6,21 +6,21 @@ load test_helper
 
 setup() {
     setup_test_dir
-    SCRIPT="${PROJECT_ROOT}/ccblocks"
-    BIN_DIR="${PROJECT_BIN_DIR}"
 
-    # Backup bin directory to prevent test corruption
-    BIN_BACKUP="${BATS_TEST_TMPDIR}/bin_backup"
-    cp -R "${BIN_DIR}" "$BIN_BACKUP"
+    # Copy the CLI + libexec into the sandbox so mocking bin/*.sh below
+    # never touches the real repository files - this is safe regardless
+    # of how the test ends (pass, fail, or killed mid-run), unlike
+    # mutating the real files in place and restoring them afterwards.
+    MOCK_ROOT="${TEST_TEMP_DIR}/repo"
+    mkdir -p "$MOCK_ROOT"
+    cp "${PROJECT_ROOT}/ccblocks" "$MOCK_ROOT/"
+    cp "${PROJECT_ROOT}/VERSION" "$MOCK_ROOT/"
+    cp -r "${PROJECT_ROOT}/libexec" "$MOCK_ROOT/"
+    SCRIPT="${MOCK_ROOT}/ccblocks"
+    BIN_DIR="${MOCK_ROOT}/libexec/bin"
 }
 
 teardown() {
-    # Always restore bin directory from backup
-    if [ -d "$BIN_BACKUP" ]; then
-        rm -rf "${BIN_DIR}"
-        cp -R "$BIN_BACKUP" "${BIN_DIR}"
-    fi
-
     teardown_test_dir
 }
 
@@ -147,6 +147,21 @@ EOF
     run "$SCRIPT" unpause
     assert_success
     assert_output "Received: resume"
+}
+
+# Command routing tests - trigger
+@test "ccblocks routes trigger command to trigger.sh" {
+    # Create a mock trigger in bin/ (sandboxed copy, see setup())
+    cat > "${BIN_DIR}/trigger.sh" << 'EOF'
+#!/bin/bash
+echo "trigger was called with: $@"
+exit 0
+EOF
+    chmod +x "${BIN_DIR}/trigger.sh"
+
+    run "$SCRIPT" trigger --test-arg
+    assert_success
+    assert_output --partial "trigger was called"
 }
 
 # Command routing tests - uninstall

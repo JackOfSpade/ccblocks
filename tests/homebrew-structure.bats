@@ -93,6 +93,36 @@ simulate_homebrew_install() {
     assert [ -f "$CCBLOCKS_CONFIG/.last-activity" ]
 }
 
+@test "homebrew-structure: LaunchAgent helper rewrites a Cellar path to the opt symlink" {
+    # Build a real Homebrew Cellar layout: a versioned install directory
+    # plus the version-independent opt/ symlink brew maintains across
+    # upgrades. This is the one Homebrew-specific code path
+    # (launchagent-helper.sh's BREW_PREFIX/RELATIVE_PATH rewrite) that
+    # simulate_homebrew_install's flat layout never actually triggers.
+    local cellar_dir="${TEST_TEMP_DIR}/homebrew/Cellar/ccblocks/9.9.9"
+    mkdir -p "${cellar_dir}/libexec/lib"
+    cp "${PROJECT_ROOT}/libexec/lib/common.sh" "${cellar_dir}/libexec/lib/"
+    cp "${PROJECT_ROOT}/libexec/lib/launchagent-helper.sh" "${cellar_dir}/libexec/lib/"
+    cp "${PROJECT_ROOT}/libexec/ccblocks-daemon.sh" "${cellar_dir}/libexec/"
+
+    mkdir -p "${TEST_TEMP_DIR}/homebrew/opt"
+    ln -s "$cellar_dir" "${TEST_TEMP_DIR}/homebrew/opt/ccblocks"
+
+    # Sandbox HOME so the plist this writes never touches the real user
+    export HOME="${TEST_TEMP_DIR}/home"
+    mkdir -p "$HOME/Library/LaunchAgents"
+
+    run bash "${cellar_dir}/libexec/lib/launchagent-helper.sh" create 247
+    assert_success
+
+    run cat "$HOME/Library/LaunchAgents/ccblocks.plist"
+    assert_success
+    # Must point at the version-independent opt/ symlink, never the
+    # versioned Cellar path (which brew deletes on the next upgrade).
+    assert_output --partial "${TEST_TEMP_DIR}/homebrew/opt/ccblocks/libexec/ccblocks-daemon.sh"
+    refute_output --partial "/Cellar/ccblocks/9.9.9/"
+}
+
 @test "homebrew-structure: incorrect structure fails correctly" {
     # Create fresh test environment without calling simulate_homebrew_install
     # Deliberately install lib in wrong location (inside libexec)

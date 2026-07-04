@@ -13,19 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
-handle_setup_error() {
-	local exit_code=$?
-	local failed_command=${BASH_COMMAND:-unknown}
-
-	trap - ERR
-
-	print_error "Setup exited early while running: ${failed_command}"
-	print_warning "Common fixes: ensure the Claude CLI is installed, logged in, and reachable."
-
-	exit "$exit_code"
-}
-
-trap 'handle_setup_error' ERR
+install_err_trap "Common fixes: ensure the Claude CLI is installed, logged in, and reachable."
 
 # Detect OS and initialise OS-specific variables
 detect_os || exit 1
@@ -139,12 +127,9 @@ install_scheduler() {
 		exit 1
 	fi
 
-	# Load/enable scheduler
-	local load_cmd="load"
-	[[ "$OS_TYPE" == "Linux" ]] && load_cmd="enable"
-
-	if ! "$HELPER" "$load_cmd"; then
-		print_error "Failed to ${load_cmd} $SCHEDULER_NAME"
+	# Load/enable scheduler (LOAD_CMD is set by init_os_vars in common.sh)
+	if ! "$HELPER" "$LOAD_CMD"; then
+		print_error "Failed to ${LOAD_CMD} $SCHEDULER_NAME"
 		exit 1
 	fi
 
@@ -173,8 +158,28 @@ show_completion() {
 	print_status "Setup completed successfully"
 }
 
+# Show usage
+show_usage() {
+	echo "ccblocks Setup"
+	echo ""
+	echo "Usage: ccblocks setup"
+	echo ""
+	echo "Options:"
+	echo "  -h, --help    # Show this help message"
+	echo ""
+	echo "Runs the interactive installer: checks the Claude CLI, lets you choose"
+	echo "a schedule preset, and installs the LaunchAgent/systemd scheduler."
+}
+
 # Main setup flow
 main() {
+	case "${1:-}" in
+	-h | --help)
+		show_usage
+		exit 0
+		;;
+	esac
+
 	print_header "[CCBLOCKS] ccblocks Setup"
 	show_logo
 	echo ""
@@ -193,7 +198,7 @@ main() {
 	read -r -p "Proceed with installation? [Y/n]: " confirm
 
 	# Default to yes if empty, or if user explicitly said no
-	if [[ "$confirm" =~ ^[Nn]$ ]]; then
+	if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
 		print_status "Setup cancelled"
 		exit 0
 	fi

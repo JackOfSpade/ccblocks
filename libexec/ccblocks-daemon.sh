@@ -35,12 +35,9 @@ else
 		done
 	fi
 
-	# Last-resort recursive search under ~/.local (may be a shim)
-	if [ -z "$CLAUDE_BIN" ]; then
-		CLAUDE_BIN=$(find "$HOME/.local" -name claude -type f -perm -100 2>/dev/null | head -1 || true)
-	fi
-
-	# System-wide install locations
+	# System-wide install locations (cheap, fixed paths - check these
+	# before the recursive find below, which can be slow on a large or
+	# network-mounted $HOME/.local)
 	if [ -z "$CLAUDE_BIN" ]; then
 		for candidate in \
 			"/opt/homebrew/bin/claude" \
@@ -51,6 +48,13 @@ else
 				break
 			fi
 		done
+	fi
+
+	# Last-resort recursive search under ~/.local (may be a shim). Bounded
+	# in depth and wall-clock time so a huge or slow $HOME/.local can't
+	# stall a scheduled trigger.
+	if [ -z "$CLAUDE_BIN" ]; then
+		CLAUDE_BIN=$(run_with_timeout 5 find "$HOME/.local" -maxdepth 6 -name claude -type f -perm -100 2>/dev/null | head -1 || true)
 	fi
 fi
 

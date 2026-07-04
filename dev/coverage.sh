@@ -114,10 +114,16 @@ analyze_script_coverage() {
 		script_name=$(basename "$script")
 		total=$((total + 1))
 
-		# Check if there's a corresponding test file
-		if [ -f "$PROJECT_ROOT/tests/${script_name}.bats" ]; then
+		# A script is "covered" if some .bats file actually exercises it
+		# (references its bin/<name> path) - the test files here don't
+		# follow a 1:1 filename convention (e.g. status.sh is tested by
+		# check-status.bats, schedule.sh by schedule-blocks.bats), so
+		# matching on the test file's own name would always miss.
+		local covering_tests
+		covering_tests=$(grep -l "bin/${script_name}" "$PROJECT_ROOT"/tests/*.bats 2>/dev/null | xargs -n1 basename 2>/dev/null | paste -sd, -)
+		if [ -n "$covering_tests" ]; then
 			covered=$((covered + 1))
-			print_success "$script_name (tests/${script_name}.bats)"
+			print_success "$script_name ($covering_tests)"
 		else
 			print_warning "$script_name (no test file)"
 		fi
@@ -138,19 +144,18 @@ analyze_script_coverage() {
 	fi
 }
 
-# Show coverage summary
+# Show coverage summary. Populates SUMMARY_SCRIPTS/SUMMARY_TESTS so
+# main() can reuse them instead of re-running the same find/grep scans.
 show_summary() {
-	local scripts
 	local lines
 	local functions
 	local test_files
-	local tests
 
-	scripts=$(count_scripts)
+	SUMMARY_SCRIPTS=$(count_scripts)
 	lines=$(count_lines)
 	functions=$(count_functions)
 	test_files=$(count_test_files)
-	tests=$(count_tests)
+	SUMMARY_TESTS=$(count_tests)
 
 	echo ""
 	print_header "ccblocks Test Coverage Report"
@@ -158,20 +163,20 @@ show_summary() {
 	echo ""
 
 	print_header "Codebase Statistics"
-	echo "  Shell scripts:    $scripts files"
+	echo "  Shell scripts:    $SUMMARY_SCRIPTS files"
 	echo "  Lines of code:    $lines (excluding comments/blanks)"
 	echo "  Functions:        $functions unique functions"
 	echo ""
 
 	print_header "Test Statistics"
 	echo "  Test files:       $test_files files"
-	echo "  Test cases:       $tests tests"
+	echo "  Test cases:       $SUMMARY_TESTS tests"
 	echo ""
 
 	# Show average tests per script
 	local avg_tests_per_script=0
-	if [ "$scripts" -gt 0 ]; then
-		avg_tests_per_script=$((tests / scripts))
+	if [ "$SUMMARY_SCRIPTS" -gt 0 ]; then
+		avg_tests_per_script=$((SUMMARY_TESTS / SUMMARY_SCRIPTS))
 	fi
 	echo "  Avg tests/script: $avg_tests_per_script"
 }
@@ -184,13 +189,8 @@ main() {
 	echo ""
 	print_header "Coverage Goals"
 	echo "=============="
-	local current_tests
-	current_tests=$(count_tests)
-
-	local script_count
-	script_count=$(count_scripts)
-
-	local target_tests=$((script_count * 10)) # Target: 10 tests per script
+	local current_tests="$SUMMARY_TESTS"
+	local target_tests=$((SUMMARY_SCRIPTS * 10)) # Target: 10 tests per script
 
 	if [ "$current_tests" -ge "$target_tests" ]; then
 		print_success "Coverage goal achieved: $current_tests/$target_tests tests"
