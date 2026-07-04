@@ -61,6 +61,30 @@ Persistent=true
 EOF
 }
 
+# Zero-pad and comma-join hours for systemd OnCalendar syntax. Accepts
+# either space-separated (e.g. "9 14", from preset_hours) or
+# comma-separated (e.g. "9,14", from user input) input -> "09,14".
+# Shared by create_service and create_service_custom.
+format_oncalendar_hours() {
+	echo "$1" | tr ',' ' ' | awk '{for(i=1;i<=NF;i++) printf "%02d,", $i}' | sed 's/,$//'
+}
+
+# Map space-separated ISO weekday numbers (1=Monday..7=Sunday, matching
+# preset_weekdays' numbering) to a systemd OnCalendar day-of-week list,
+# e.g. "1 2 3 4 5" -> "Mon,Tue,Wed,Thu,Fri" (systemd itself normalizes a
+# contiguous list like that to "Mon..Fri"). Keeps systemd-helper.sh in
+# sync with launchagent-helper.sh, which already derives its Weekday
+# entries from the same preset_weekdays values instead of hardcoding a
+# day range - see the common.sh comment on preset_weekdays for why.
+weekdays_to_oncalendar() {
+	local -a names=(Sun Mon Tue Wed Thu Fri Sat) # index 0..6; ISO 7 (Sun) -> 0
+	local day list=""
+	for day in $1; do
+		list+="${list:+,}${names[$((day % 7))]}"
+	done
+	echo "$list"
+}
+
 # Create systemd service and timer files
 create_service() {
 	local schedule="${1:-247}"
@@ -72,19 +96,19 @@ create_service() {
 		print_error "Unknown schedule: $schedule"
 		return 1
 	fi
-	weekdays=$(preset_weekdays "$schedule")
+	if ! weekdays=$(preset_weekdays "$schedule"); then
+		print_error "Unknown schedule: $schedule"
+		return 1
+	fi
 
-	# Zero-pad each hour for OnCalendar syntax (e.g. "9 14" -> "09,14")
 	local formatted_hours
-	formatted_hours=$(echo "$hours" | awk '{for(i=1;i<=NF;i++) printf "%02d,", $i}' | sed 's/,$//')
+	formatted_hours=$(format_oncalendar_hours "$hours")
 
 	local oncalendar
 	if [ -z "$weekdays" ]; then
 		oncalendar="*-*-* ${formatted_hours}:00:00"
 	else
-		# preset_weekdays only ever returns the Mon-Fri range (ISO 1-5)
-		# today; systemd's day-name range syntax covers that directly.
-		oncalendar="Mon-Fri *-*-* ${formatted_hours}:00:00"
+		oncalendar="$(weekdays_to_oncalendar "$weekdays") *-*-* ${formatted_hours}:00:00"
 	fi
 
 	write_timer_file "$oncalendar"
@@ -98,10 +122,8 @@ create_service_custom() {
 
 	write_service_file
 
-	# Convert comma-separated hours to systemd OnCalendar format
-	# E.g., "0,6,12,18" becomes "*-*-* 00,06,12,18:00:00"
 	local formatted_hours
-	formatted_hours=$(echo "$hours_str" | tr ',' ' ' | awk '{for(i=1;i<=NF;i++) printf "%02d,", $i}' | sed 's/,$//')
+	formatted_hours=$(format_oncalendar_hours "$hours_str")
 	local oncalendar="*-*-* ${formatted_hours}:00:00"
 
 	write_timer_file "$oncalendar"

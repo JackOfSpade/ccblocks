@@ -94,7 +94,10 @@ create_plist() {
 		print_error "Unknown schedule: $schedule"
 		return 1
 	fi
-	weekdays=$(preset_weekdays "$schedule")
+	if ! weekdays=$(preset_weekdays "$schedule"); then
+		print_error "Unknown schedule: $schedule"
+		return 1
+	fi
 
 	local intervals=""
 	if [ -z "$weekdays" ]; then

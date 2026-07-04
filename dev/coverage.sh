@@ -131,7 +131,7 @@ analyze_script_coverage() {
 			else
 				covering_tests="$(basename "$match_file")"
 			fi
-		done < <(grep -l "$script_name" "$PROJECT_ROOT"/tests/*.bats 2>/dev/null || true)
+		done < <(grep -Fl "$script_name" "$PROJECT_ROOT"/tests/*.bats 2>/dev/null || true)
 
 		if [ -n "$covering_tests" ]; then
 			covered=$((covered + 1))

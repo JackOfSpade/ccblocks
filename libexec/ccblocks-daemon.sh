@@ -52,9 +52,11 @@ else
 
 	# Last-resort recursive search under ~/.local (may be a shim). Bounded
 	# in depth and wall-clock time so a huge or slow $HOME/.local can't
-	# stall a scheduled trigger.
+	# stall a scheduled trigger. Depth 8 covers deeper layouts like mise's
+	# non-shim installs tree (~/.local/share/mise/installs/<tool>/<ver>/bin/)
+	# with margin to spare, at negligible extra cost given the timeout.
 	if [ -z "$CLAUDE_BIN" ]; then
-		CLAUDE_BIN=$(run_with_timeout 5 find "$HOME/.local" -maxdepth 6 -name claude -type f -perm -100 2>/dev/null | head -1 || true)
+		CLAUDE_BIN=$(run_with_timeout 5 find "$HOME/.local" -maxdepth 8 -name claude -type f -perm -100 2>/dev/null | head -1 || true)
 	fi
 fi
 
