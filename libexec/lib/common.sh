@@ -82,6 +82,30 @@ print_header() {
 	echo -e "${BLUE}${BOLD}$1${NC}"
 }
 
+# Install a friendly ERR trap so an unhandled failure under `set -e`
+# reports which command failed instead of the script dying silently.
+# Caller must also `set -E` beforehand so the trap fires inside
+# functions. Pass an optional one-line hint shown alongside the error.
+# Usage: set -E; install_err_trap "Common fixes: ..."
+install_err_trap() {
+	CCBLOCKS_ERR_HINT="${1:-}"
+	trap 'handle_ccblocks_error' ERR
+}
+
+handle_ccblocks_error() {
+	local exit_code=$?
+	local failed_command=${BASH_COMMAND:-unknown}
+
+	trap - ERR
+
+	print_error "Exited early while running: ${failed_command}"
+	if [ -n "${CCBLOCKS_ERR_HINT:-}" ]; then
+		print_warning "$CCBLOCKS_ERR_HINT"
+	fi
+
+	exit "$exit_code"
+}
+
 show_logo() {
 	echo "░░      ░░░      ░░       ░░  ░░░░░░░      ░░░      ░░  ░░░░  ░░      ░░"
 	echo "▒  ▒▒▒▒  ▒  ▒▒▒▒  ▒  ▒▒▒▒  ▒  ▒▒▒▒▒▒  ▒▒▒▒  ▒  ▒▒▒▒  ▒  ▒▒▒  ▒▒  ▒▒▒▒▒▒▒"
@@ -119,6 +143,39 @@ detect_os() {
 # Constants
 export BLOCK_DURATION_SECONDS=18000 # 5 hours in seconds
 
+# Canonical preset schedule definitions - the one place that encodes each
+# preset's trigger hours and (for weekday-restricted presets) which ISO
+# weekdays it applies to. launchagent-helper.sh and systemd-helper.sh both
+# derive their platform-specific schedule syntax from this, so a future
+# preset change can't drift between platforms the way the "work" preset's
+# weekday encoding once did (macOS and Linux disagreed on which days
+# "Mon-Fri" actually landed on).
+#
+# Usage: preset_hours <name>    -> space-separated hours, e.g. "0 6 12 18"
+#        preset_weekdays <name> -> space-separated ISO weekday numbers
+#                                  (1=Monday..7=Sunday), or empty for a
+#                                  daily (every day) preset
+# Both return 1 silently (no print_error) on an unknown name: callers
+# invoke these via command substitution, so writing an error message to
+# stdout here would get captured into the result instead of shown to the
+# user - the caller reports the "Unknown schedule" error itself.
+preset_hours() {
+	case "$1" in
+	247) echo "0 6 12 18" ;;
+	work) echo "9 14" ;;
+	night) echo "18 23" ;;
+	*) return 1 ;;
+	esac
+}
+
+preset_weekdays() {
+	case "$1" in
+	work) echo "1 2 3 4 5" ;; # Monday-Friday, ISO weekday numbering
+	247 | night) echo "" ;;   # every day
+	*) return 1 ;;
+	esac
+}
+
 # Logging helpers
 log_to_system() {
 	local message="$1"
@@ -145,13 +202,12 @@ require_subscription_auth() {
 	local claude_bin="${1:-claude}"
 	local forbidden_var
 
+	# Credential-shaped vars: any non-empty value means an API/provider
+	# credential is in use.
 	for forbidden_var in \
 		ANTHROPIC_API_KEY \
 		ANTHROPIC_AUTH_TOKEN \
-		ANTHROPIC_BASE_URL \
-		CLAUDE_CODE_USE_BEDROCK \
-		CLAUDE_CODE_USE_VERTEX \
-		CLAUDE_CODE_USE_FOUNDRY; do
+		ANTHROPIC_BASE_URL; do
 		if [ -n "${!forbidden_var:-}" ]; then
 			print_error "Refusing to trigger: $forbidden_var is set"
 			print_error "ccblocks only triggers Claude subscription auth users."
@@ -159,6 +215,25 @@ require_subscription_auth() {
 			log_to_system "Refused trigger because $forbidden_var is set"
 			return 1
 		fi
+	done
+
+	# Boolean-shaped provider flags: only a truthy value means the
+	# provider is actually enabled (Claude Code documents "set to 1 or
+	# true"); a merely-set-but-falsy value like "0" is not in use.
+	local forbidden_flag
+	for forbidden_flag in \
+		CLAUDE_CODE_USE_BEDROCK \
+		CLAUDE_CODE_USE_VERTEX \
+		CLAUDE_CODE_USE_FOUNDRY; do
+		case "${!forbidden_flag:-}" in
+		1 | true | TRUE | True)
+			print_error "Refusing to trigger: $forbidden_flag is enabled"
+			print_error "ccblocks only triggers Claude subscription auth users."
+			echo "Unset API/provider credentials before running ccblocks."
+			log_to_system "Refused trigger because $forbidden_flag is enabled"
+			return 1
+			;;
+		esac
 	done
 
 	local auth_status=""
@@ -260,11 +335,13 @@ init_os_vars() {
 	if [[ "$OS_TYPE" == "Darwin" ]]; then
 		export HELPER="$script_dir/lib/launchagent-helper.sh"
 		export CONFIG_PATH="$HOME/Library/LaunchAgents/ccblocks.plist"
+		export TIMER_PATH="" # no separate timer file on macOS
 		export LOAD_CMD="load"
 		export UNLOAD_CMD="unload"
 	elif [[ "$OS_TYPE" == "Linux" ]]; then
 		export HELPER="$script_dir/lib/systemd-helper.sh"
 		export CONFIG_PATH="$HOME/.config/systemd/user/ccblocks@.service"
+		export TIMER_PATH="$HOME/.config/systemd/user/ccblocks@.timer"
 		export LOAD_CMD="enable"
 		export UNLOAD_CMD="disable"
 	else
@@ -372,6 +449,9 @@ validate_custom_hours() {
 			print_error "Invalid hour: '$h' (must be a number)"
 			return 1
 		fi
+		# Force base-10 interpretation: bash arithmetic/comparison treats a
+		# leading zero (e.g. "08") as octal, which is invalid for 8/9.
+		h=$((10#$h))
 		if [[ "$h" -lt 0 || "$h" -gt 23 ]]; then
 			print_error "Invalid hour: $h (must be 0-23)"
 			return 1
@@ -447,5 +527,7 @@ calculate_coverage() {
 
 # Export functions so they can be used in subshells if needed
 export -f print_status print_error print_warning print_header show_logo run_with_timeout log_to_system command_exists
+export -f install_err_trap handle_ccblocks_error
+export -f preset_hours preset_weekdays
 export -f json_string_value json_bool_value require_subscription_auth run_claude_subscription_trigger
 export -f read_schedule_config write_schedule_config validate_custom_hours calculate_coverage

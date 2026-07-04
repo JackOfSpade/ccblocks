@@ -10,10 +10,6 @@ setup() {
 }
 
 teardown() {
-    # Restore helper files if they were mocked
-    restore_helper_for_status 2>/dev/null || true
-    restore_helper_for_uninstall 2>/dev/null || true
-
     # Clean up symlink created for lib sourcing
     if [ -L "${TEST_TEMP_DIR}/../lib" ]; then
         rm -f "${TEST_TEMP_DIR}/../lib"
@@ -250,11 +246,11 @@ EOF
     # Create empty activity file
     touch "$CCBLOCKS_CONFIG/.last-activity"
 
-    # Create mock helper
+    # Create mock helper (in a sandboxed libexec copy, see
+    # create_mock_helper_for_status)
     create_mock_helper_for_status
 
-    run "${PROJECT_ROOT}/libexec/bin/status.sh"
-    restore_helper_for_status
+    run "${MOCK_LIBEXEC}/bin/status.sh"
     assert_success
     # Should handle empty file gracefully
 }
@@ -275,6 +271,13 @@ EOF
     assert_failure
     assert_output --partial "Claude CLI not found"
     assert_output --partial "Tried:"
+}
+
+@test "setup shows help with --help instead of running the installer" {
+    run "${PROJECT_ROOT}/libexec/bin/setup.sh" --help
+    assert_success
+    assert_output --partial "Usage: ccblocks setup"
+    refute_output --partial "Claude CLI found"
 }
 
 @test "setup refuses API credentials before Claude test request" {
@@ -339,19 +342,20 @@ exit 1"
     assert_output --regexp "(invalid|Unknown|available|247|work|night)"
 }
 
-# Helper function to create mock helper for check-status tests
+# Helper function to create mock helper for check-status tests. Copies
+# libexec into the sandbox first so mocking the OS helper never touches
+# the real repository file (safe regardless of how the test ends).
 create_mock_helper_for_status() {
-    local helper_dir="${PROJECT_ROOT}/libexec/lib"
+    MOCK_LIBEXEC="${TEST_TEMP_DIR}/libexec"
+    cp -r "${PROJECT_ROOT}/libexec" "$MOCK_LIBEXEC"
+
+    local helper_dir="${MOCK_LIBEXEC}/lib"
     local helper_name
 
     if [[ "$(uname)" == "Darwin" ]]; then
         helper_name="launchagent-helper.sh"
     else
         helper_name="systemd-helper.sh"
-    fi
-
-    if [ -f "${helper_dir}/${helper_name}" ]; then
-        cp "${helper_dir}/${helper_name}" "${TEST_TEMP_DIR}/${helper_name}.backup"
     fi
 
     cat > "${helper_dir}/${helper_name}" << 'EOF'
@@ -370,24 +374,6 @@ case "$1" in
 esac
 EOF
     chmod +x "${helper_dir}/${helper_name}"
-}
-
-restore_helper_for_status() {
-    local helper_dir="${PROJECT_ROOT}/libexec/lib"
-    local helper_name
-
-    if [[ "$(uname)" == "Darwin" ]]; then
-        helper_name="launchagent-helper.sh"
-    else
-        helper_name="systemd-helper.sh"
-    fi
-
-    # Restore original helper from backup
-    if [ -f "${TEST_TEMP_DIR}/${helper_name}.backup" ]; then
-        mv "${TEST_TEMP_DIR}/${helper_name}.backup" "${helper_dir}/${helper_name}"
-    else
-        echo "Warning: No backup found for ${helper_name}" >&2
-    fi
 }
 
 # Logger failure scenarios
@@ -425,25 +411,25 @@ EOF
     create_mock_helper_for_uninstall
 
     # Run with force mode to skip prompts
-    run "${PROJECT_ROOT}/libexec/bin/uninstall.sh" --force
-    restore_helper_for_uninstall
+    run "${MOCK_LIBEXEC}/bin/uninstall.sh" --force
 
     # Should complete successfully
     assert_success
 }
 
+# Copies libexec into the sandbox first so mocking the OS helper never
+# touches the real repository file (safe regardless of how the test ends).
 create_mock_helper_for_uninstall() {
-    local helper_dir="${PROJECT_ROOT}/libexec/lib"
+    MOCK_LIBEXEC="${TEST_TEMP_DIR}/libexec"
+    cp -r "${PROJECT_ROOT}/libexec" "$MOCK_LIBEXEC"
+
+    local helper_dir="${MOCK_LIBEXEC}/lib"
     local helper_name
 
     if [[ "$(uname)" == "Darwin" ]]; then
         helper_name="launchagent-helper.sh"
     else
         helper_name="systemd-helper.sh"
-    fi
-
-    if [ -f "${helper_dir}/${helper_name}" ]; then
-        cp "${helper_dir}/${helper_name}" "${TEST_TEMP_DIR}/${helper_name}.backup"
     fi
 
     cat > "${helper_dir}/${helper_name}" << 'EOF'
@@ -461,22 +447,4 @@ case "$1" in
 esac
 EOF
     chmod +x "${helper_dir}/${helper_name}"
-}
-
-restore_helper_for_uninstall() {
-    local helper_dir="${PROJECT_ROOT}/libexec/lib"
-    local helper_name
-
-    if [[ "$(uname)" == "Darwin" ]]; then
-        helper_name="launchagent-helper.sh"
-    else
-        helper_name="systemd-helper.sh"
-    fi
-
-    # Restore original helper from backup
-    if [ -f "${TEST_TEMP_DIR}/${helper_name}.backup" ]; then
-        mv "${TEST_TEMP_DIR}/${helper_name}.backup" "${helper_dir}/${helper_name}"
-    else
-        echo "Warning: No backup found for ${helper_name}" >&2
-    fi
 }

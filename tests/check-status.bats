@@ -6,24 +6,30 @@ load test_helper
 
 setup() {
     setup_test_dir
-    SCRIPT="${PROJECT_ROOT}/libexec/bin/status.sh"
+
+    # Copy libexec into the sandbox so mocking the OS helper below never
+    # touches the real repository file - this is safe regardless of how
+    # the test ends (pass, fail, or killed mid-run), unlike mutating the
+    # real file in place and restoring it afterwards.
+    MOCK_LIBEXEC="${TEST_TEMP_DIR}/libexec"
+    cp -r "${PROJECT_ROOT}/libexec" "$MOCK_LIBEXEC"
+    SCRIPT="${MOCK_LIBEXEC}/bin/status.sh"
 
     # Override config directory to test directory
     export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
     mkdir -p "$CCBLOCKS_CONFIG"
 
-    # Create mock helper script
+    # Create mock helper script (inside the sandboxed copy only)
     create_mock_helper
 }
 
 teardown() {
-    restore_helper
     teardown_test_dir
 }
 
-# Helper function to create mock helper script
+# Helper function to create mock helper script (inside the sandboxed copy)
 create_mock_helper() {
-    local helper_dir="${PROJECT_ROOT}/libexec/lib"
+    local helper_dir="${MOCK_LIBEXEC}/lib"
     local helper_name
 
     # Determine which helper based on OS
@@ -31,11 +37,6 @@ create_mock_helper() {
         helper_name="launchagent-helper.sh"
     else
         helper_name="systemd-helper.sh"
-    fi
-
-    # Backup original helper if exists
-    if [ -f "${helper_dir}/${helper_name}" ]; then
-        cp "${helper_dir}/${helper_name}" "${TEST_TEMP_DIR}/${helper_name}.backup"
     fi
 
     # Create mock helper
@@ -59,20 +60,19 @@ EOF
     chmod +x "${helper_dir}/${helper_name}"
 }
 
-restore_helper() {
-    local helper_dir="${PROJECT_ROOT}/libexec/lib"
-    local helper_name
+# Help tests
+@test "check-status shows help with --help instead of running the dashboard" {
+    run "$SCRIPT" --help
+    assert_success
+    assert_output --partial "Usage: ccblocks status"
+    refute_output --partial "Status Dashboard"
+}
 
-    if [[ "$(uname)" == "Darwin" ]]; then
-        helper_name="launchagent-helper.sh"
-    else
-        helper_name="systemd-helper.sh"
-    fi
-
-    # Restore original helper if backup exists
-    if [ -f "${TEST_TEMP_DIR}/${helper_name}.backup" ]; then
-        mv "${TEST_TEMP_DIR}/${helper_name}.backup" "${helper_dir}/${helper_name}"
-    fi
+@test "check-status shows help with -h instead of running the dashboard" {
+    run "$SCRIPT" -h
+    assert_success
+    assert_output --partial "Usage: ccblocks status"
+    refute_output --partial "Status Dashboard"
 }
 
 # Basic functionality tests

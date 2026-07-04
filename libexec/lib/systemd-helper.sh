@@ -26,19 +26,13 @@ service_exists() {
 	[ -f "$SERVICE_FILE" ]
 }
 
-# Check if timer is active
-timer_active() {
-	systemctl --user is-active "${SERVICE_NAME}@*.timer" &>/dev/null
-}
-
-# Create systemd service and timer files
-create_service() {
-	local schedule="${1:-247}"
-
+# Write the systemd service unit file. Shared by create_service (presets)
+# and create_service_custom so the template only needs to be kept
+# correct in one place.
+write_service_file() {
 	# Create systemd user directory if it doesn't exist
 	mkdir -p "$HOME/.config/systemd/user"
 
-	# Create service file (template)
 	cat >"$SERVICE_FILE" <<EOF
 [Unit]
 Description=ccblocks Claude Code Block Trigger (%i)
@@ -50,26 +44,13 @@ ExecStart=$TRIGGER_SCRIPT
 SyslogIdentifier=ccblocks
 Environment=PATH=$PATH
 EOF
+}
 
-	# Define timer schedules
-	local oncalendar
-	case "$schedule" in
-	"247")
-		oncalendar="*-*-* 00,06,12,18:00:00"
-		;;
-	"work")
-		oncalendar="Mon-Fri *-*-* 09,14:00:00"
-		;;
-	"night")
-		oncalendar="*-*-* 18,23:00:00"
-		;;
-	*)
-		print_error "Unknown schedule: $schedule"
-		return 1
-		;;
-	esac
+# Write the systemd timer unit file for the given OnCalendar expression.
+# Shared by create_service (presets) and create_service_custom.
+write_timer_file() {
+	local oncalendar="$1"
 
-	# Create timer file (template)
 	cat >"$TIMER_FILE" <<EOF
 [Unit]
 Description=ccblocks Scheduling Timer (%i)
@@ -78,6 +59,35 @@ Description=ccblocks Scheduling Timer (%i)
 OnCalendar=$oncalendar
 Persistent=true
 EOF
+}
+
+# Create systemd service and timer files
+create_service() {
+	local schedule="${1:-247}"
+
+	write_service_file
+
+	local hours weekdays
+	if ! hours=$(preset_hours "$schedule"); then
+		print_error "Unknown schedule: $schedule"
+		return 1
+	fi
+	weekdays=$(preset_weekdays "$schedule")
+
+	# Zero-pad each hour for OnCalendar syntax (e.g. "9 14" -> "09,14")
+	local formatted_hours
+	formatted_hours=$(echo "$hours" | awk '{for(i=1;i<=NF;i++) printf "%02d,", $i}' | sed 's/,$//')
+
+	local oncalendar
+	if [ -z "$weekdays" ]; then
+		oncalendar="*-*-* ${formatted_hours}:00:00"
+	else
+		# preset_weekdays only ever returns the Mon-Fri range (ISO 1-5)
+		# today; systemd's day-name range syntax covers that directly.
+		oncalendar="Mon-Fri *-*-* ${formatted_hours}:00:00"
+	fi
+
+	write_timer_file "$oncalendar"
 
 	print_status "Created systemd service and timer files"
 }
@@ -86,21 +96,7 @@ EOF
 create_service_custom() {
 	local hours_str="$1"
 
-	# Create systemd user directory if it doesn't exist
-	mkdir -p "$HOME/.config/systemd/user"
-
-	# Create service file (template)
-	cat >"$SERVICE_FILE" <<EOF
-[Unit]
-Description=ccblocks Claude Code Block Trigger (%i)
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=$TRIGGER_SCRIPT
-SyslogIdentifier=ccblocks
-Environment=PATH=$PATH
-EOF
+	write_service_file
 
 	# Convert comma-separated hours to systemd OnCalendar format
 	# E.g., "0,6,12,18" becomes "*-*-* 00,06,12,18:00:00"
@@ -108,15 +104,7 @@ EOF
 	formatted_hours=$(echo "$hours_str" | tr ',' ' ' | awk '{for(i=1;i<=NF;i++) printf "%02d,", $i}' | sed 's/,$//')
 	local oncalendar="*-*-* ${formatted_hours}:00:00"
 
-	# Create timer file (template)
-	cat >"$TIMER_FILE" <<EOF
-[Unit]
-Description=ccblocks Scheduling Timer (%i)
-
-[Timer]
-OnCalendar=$oncalendar
-Persistent=true
-EOF
+	write_timer_file "$oncalendar"
 
 	print_status "Created custom systemd service and timer files"
 	print_status "Triggers at: ${hours_str}"

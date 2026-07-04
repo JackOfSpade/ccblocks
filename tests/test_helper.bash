@@ -35,6 +35,16 @@ setup_test_dir() {
     # user's real ~/.config/ccblocks; tests may re-export their own
     # temp path on top of this default.
     export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
+
+    # Sandbox against the host's own environment too: a corporate proxy,
+    # LLM gateway, or coding-agent sandbox may already have provider
+    # credentials set, which would make credential-refusal assertions
+    # and "trigger succeeds" tests fail for reasons that have nothing to
+    # do with the code under test. Individual tests that specifically
+    # exercise the refusal behaviour re-export these on top of this
+    # baseline.
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+    unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY
 }
 
 teardown_test_dir() {

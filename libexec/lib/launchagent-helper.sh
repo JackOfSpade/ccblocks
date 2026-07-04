@@ -44,77 +44,11 @@ agent_loaded() {
 	launchctl list | grep -w "$LABEL" >/dev/null
 }
 
-# Create LaunchAgent plist
-create_plist() {
-	local schedule="${1:-247}"
-
-	# Define schedule intervals
-	local intervals
-	case "$schedule" in
-	"247")
-		intervals='
-        <dict>
-            <key>Hour</key>
-            <integer>0</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <dict>
-            <key>Hour</key>
-            <integer>6</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <dict>
-            <key>Hour</key>
-            <integer>12</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <dict>
-            <key>Hour</key>
-            <integer>18</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>'
-		;;
-	"work")
-		# Generate weekday entries (Mon=2 through Fri=6) at 9 AM and 2 PM
-		intervals=""
-		for weekday in 2 3 4 5 6; do
-			for hour in 9 14; do
-				intervals+="
-        <dict>
-            <key>Hour</key>
-            <integer>$hour</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-            <key>Weekday</key>
-            <integer>$weekday</integer>
-        </dict>"
-			done
-		done
-		;;
-	"night")
-		intervals='
-        <dict>
-            <key>Hour</key>
-            <integer>18</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <dict>
-            <key>Hour</key>
-            <integer>23</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>'
-		;;
-	*)
-		print_error "Unknown schedule: $schedule"
-		return 1
-		;;
-	esac
+# Write the LaunchAgent plist with the given <dict>...</dict> interval
+# entries. Shared by create_plist (presets) and create_plist_custom so
+# the plist template only needs to be kept correct in one place.
+write_plist() {
+	local intervals="$1"
 
 	cat >"$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -149,6 +83,50 @@ create_plist() {
 </dict>
 </plist>
 EOF
+}
+
+# Create LaunchAgent plist
+create_plist() {
+	local schedule="${1:-247}"
+	local hours weekdays
+
+	if ! hours=$(preset_hours "$schedule"); then
+		print_error "Unknown schedule: $schedule"
+		return 1
+	fi
+	weekdays=$(preset_weekdays "$schedule")
+
+	local intervals=""
+	if [ -z "$weekdays" ]; then
+		for hour in $hours; do
+			intervals+="
+        <dict>
+            <key>Hour</key>
+            <integer>$hour</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>"
+		done
+	else
+		# launchd's Weekday key: 0 and 7 both mean Sunday, 1=Monday, ...,
+		# 6=Saturday (see launchd.plist(5)) - the same numbering
+		# preset_weekdays uses, so no translation is needed here.
+		for weekday in $weekdays; do
+			for hour in $hours; do
+				intervals+="
+        <dict>
+            <key>Hour</key>
+            <integer>$hour</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+            <key>Weekday</key>
+            <integer>$weekday</integer>
+        </dict>"
+			done
+		done
+	fi
+
+	write_plist "$intervals"
 
 	print_status "Created LaunchAgent plist at: $PLIST_PATH"
 }
@@ -173,39 +151,7 @@ create_plist_custom() {
         </dict>"
 	done
 
-	cat >"$PLIST_PATH" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$LABEL</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>$TRIGGER_SCRIPT</string>
-    </array>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>$PATH</string>
-    </dict>
-
-    <key>StandardOutPath</key>
-    <string>$HOME/Library/Logs/ccblocks.log</string>
-    <key>StandardErrorPath</key>
-    <string>$HOME/Library/Logs/ccblocks.log</string>
-
-    <key>StartCalendarInterval</key>
-    <array>$intervals
-    </array>
-
-    <key>RunAtLoad</key>
-    <false/>
-</dict>
-</plist>
-EOF
+	write_plist "$intervals"
 
 	print_status "Created custom LaunchAgent plist at: $PLIST_PATH"
 	print_status "Triggers at: ${hours_str}"
@@ -289,13 +235,13 @@ status_agent() {
                 /"Weekday" =>/ { w = $NF }
                 /}/ && h != "" && m != "" {
                     wd = ""
-                    if (w == "1") wd = " (Sun)"
-                    else if (w == "2") wd = " (Mon)"
-                    else if (w == "3") wd = " (Tue)"
-                    else if (w == "4") wd = " (Wed)"
-                    else if (w == "5") wd = " (Thu)"
-                    else if (w == "6") wd = " (Fri)"
-                    else if (w == "7") wd = " (Sat)"
+                    if (w == "0" || w == "7") wd = " (Sun)"
+                    else if (w == "1") wd = " (Mon)"
+                    else if (w == "2") wd = " (Tue)"
+                    else if (w == "3") wd = " (Wed)"
+                    else if (w == "4") wd = " (Thu)"
+                    else if (w == "5") wd = " (Fri)"
+                    else if (w == "6") wd = " (Sat)"
                     printf "  %02d:%02d%s\n", h, m, wd
                     h = m = w = ""
                 }

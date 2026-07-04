@@ -4,6 +4,7 @@
 # Manage scheduling patterns for block triggers
 
 set -euo pipefail
+set -E
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source common library
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
+
+install_err_trap "Common fixes: ensure the scheduler helper and its config directory are readable."
 
 # Initialize OS-specific variables
 detect_os || exit 1
