@@ -298,3 +298,124 @@ shift
     assert_output --partial "[DEBUG]"
     assert_output --partial "Unexpected format"
 }
+
+# Precise-retry scheduling tests
+#
+# Sandboxes a copy of libexec so the OS scheduler helper (systemd-helper.sh
+# or launchagent-helper.sh) can be replaced with a call recorder, without
+# ever touching the real repository file or a real scheduler. Returns the
+# path to the sandboxed ccblocks-daemon.sh to run.
+create_mock_helper_for_retry() {
+    local calls_file="$1"
+
+    MOCK_LIBEXEC="${TEST_TEMP_DIR}/libexec"
+    cp -r "${PROJECT_ROOT}/libexec" "$MOCK_LIBEXEC"
+
+    local helper_dir="${MOCK_LIBEXEC}/lib"
+    local helper_name
+    if [[ "$(uname)" == "Darwin" ]]; then
+        helper_name="launchagent-helper.sh"
+    else
+        helper_name="systemd-helper.sh"
+    fi
+
+    cat > "${helper_dir}/${helper_name}" << EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "${calls_file}"
+exit 0
+EOF
+    chmod +x "${helper_dir}/${helper_name}"
+
+    echo "${MOCK_LIBEXEC}/ccblocks-daemon.sh"
+}
+
+@test "ccblocks-daemon schedules a precise retry when the failure message has a reset time" {
+    calls_file="${TEST_TEMP_DIR}/helper-calls.log"
+    daemon_script=$(create_mock_helper_for_retry "$calls_file")
+
+    mock_claude_with_auth "$(claude_auth_json)" '
+echo "You'"'"'ve hit your session limit · resets 1:40am (Europe/London)" >&2
+exit 1'
+
+    run "$daemon_script"
+    assert_failure
+    assert_file_contains "$calls_file" "^retry [0-9][0-9]*$"
+}
+
+@test "ccblocks-daemon does not schedule a retry when the failure message has no reset time" {
+    calls_file="${TEST_TEMP_DIR}/helper-calls.log"
+    daemon_script=$(create_mock_helper_for_retry "$calls_file")
+
+    mock_claude_failure
+
+    run "$daemon_script"
+    assert_failure
+    refute [ -f "$calls_file" ]
+}
+
+@test "ccblocks-daemon does not chain a retry from an already-retried attempt" {
+    calls_file="${TEST_TEMP_DIR}/helper-calls.log"
+    daemon_script=$(create_mock_helper_for_retry "$calls_file")
+
+    mock_claude_with_auth "$(claude_auth_json)" '
+echo "You'"'"'ve hit your session limit · resets 1:40am (Europe/London)" >&2
+exit 1'
+
+    CCBLOCKS_RETRY_ATTEMPT=1 run "$daemon_script"
+    assert_failure
+    refute [ -f "$calls_file" ]
+}
+
+@test "ccblocks-daemon cancels any pending retry (and never schedules one) on a successful trigger" {
+    calls_file="${TEST_TEMP_DIR}/helper-calls.log"
+    daemon_script=$(create_mock_helper_for_retry "$calls_file")
+
+    mock_claude_success
+
+    run "$daemon_script"
+    assert_success
+    # A successful trigger means any retry armed by an earlier failure is
+    # no longer needed - the daemon should tell the helper to cancel it,
+    # but must never call it with "retry" (nothing failed here).
+    assert_file_contains "$calls_file" "^cancel$"
+    run grep -q "^retry " "$calls_file"
+    assert_failure
+}
+
+# Regression test: an earlier version of the output-capture rewrite (needed
+# to make claude's output available to parse_reset_epoch) accidentally
+# suppressed ALL output - including stderr - on a successful run in the
+# default (non-debug) mode. Before that rewrite, stdout was suppressed but
+# stderr always passed through regardless of success/failure or debug mode;
+# this pins that original behaviour back down.
+@test "ccblocks-daemon still surfaces stray stderr output from claude on a successful run in non-debug mode" {
+    mock_claude_with_auth "$(claude_auth_json)" '
+echo "some non-fatal warning from claude" >&2
+echo "Claude mock: Success"
+exit 0'
+
+    run "$SCRIPT"
+    assert_success
+    assert_output --partial "some non-fatal warning from claude"
+}
+
+@test "ccblocks-daemon suppresses claude's stdout on a successful run in non-debug mode" {
+    mock_claude_with_auth "$(claude_auth_json)" '
+echo "this stdout text should not appear"
+exit 0'
+
+    run "$SCRIPT"
+    assert_success
+    refute_output --partial "this stdout text should not appear"
+}
+
+@test "ccblocks-daemon shows claude's stdout on a successful run when CCBLOCKS_DEBUG=1" {
+    mock_claude_with_auth "$(claude_auth_json)" '
+echo "this stdout text should appear in debug mode"
+exit 0'
+
+    export CCBLOCKS_DEBUG=1
+    run "$SCRIPT"
+    assert_success
+    assert_output --partial "this stdout text should appear in debug mode"
+}

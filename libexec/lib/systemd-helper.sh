@@ -160,6 +160,53 @@ disable_timer() {
 	fi
 }
 
+# Cancel any still-pending precise retry (used both to replace a stale one
+# before scheduling a new one, and to clean up after a later trigger - the
+# regular schedule or a manual `ccblocks trigger` - already succeeded, so a
+# still-armed retry doesn't fire needlessly). Safe to call when none exists.
+cancel_retry() {
+	systemctl --user stop "${SERVICE_NAME}-retry.timer" "${SERVICE_NAME}-retry.service" >/dev/null 2>&1 || true
+}
+
+# Schedule a one-shot retry of the trigger at the given Unix epoch (used
+# when a failed trigger's usage-limit message told us exactly when it'll
+# next succeed). Runs as a transient systemd-run timer rather than
+# touching the persistent @default timer/service, so the regular schedule
+# is untouched. --collect garbage-collects the transient unit once it has
+# run, so a rejected or successful retry never lingers, and the fixed unit
+# name (replaced via cancel_retry before each new schedule, the same way
+# launchagent-helper.sh bootouts its own stale retry plist) means at most
+# one precise retry can be pending at a time.
+schedule_retry() {
+	local epoch="$1"
+
+	if ! command_exists systemd-run; then
+		print_warning "systemd-run not found; cannot schedule a precise retry"
+		return 1
+	fi
+
+	local when
+	when=$(date -d "@$epoch" '+%Y-%m-%d %H:%M:%S') || return 1
+
+	# Replace any still-pending retry from an earlier failed attempt.
+	cancel_retry
+
+	if systemd-run --user \
+		--unit="${SERVICE_NAME}-retry" \
+		--collect \
+		--on-calendar="$when" \
+		--setenv="CCBLOCKS_RETRY_ATTEMPT=1" \
+		--setenv="PATH=$PATH" \
+		"$TRIGGER_SCRIPT" >/dev/null 2>&1; then
+		print_status "Scheduled retry for $when"
+		log_to_system "Scheduled precise retry at $when after usage-limit rejection"
+		return 0
+	else
+		print_warning "Failed to schedule retry via systemd-run"
+		return 1
+	fi
+}
+
 # Start service immediately
 start_service() {
 	if ! service_exists; then
@@ -246,6 +293,8 @@ show_usage() {
 	echo "  status             - Show service/timer status"
 	echo "  remove             - Remove service/timer completely"
 	echo "  logs               - Show recent logs"
+	echo "  retry <epoch>      - Schedule a one-shot retry at the given Unix epoch"
+	echo "  cancel             - Cancel a still-pending precise retry, if any"
 	echo ""
 	echo "Examples:"
 	echo "  $0 create 247     # Create with 24/7 schedule"
@@ -301,6 +350,17 @@ main() {
 		;;
 	remove)
 		remove_service
+		;;
+	retry)
+		local epoch="${2:-}"
+		if [ -z "$epoch" ]; then
+			print_error "Epoch timestamp required"
+			return 1
+		fi
+		schedule_retry "$epoch"
+		;;
+	cancel)
+		cancel_retry
 		;;
 	logs)
 		echo "Showing ccblocks logs from journald (last 50 entries):"
