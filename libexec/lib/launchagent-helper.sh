@@ -243,6 +243,21 @@ schedule_retry() {
 	hour=$((10#$hour_raw))
 	minute=$((10#$minute_raw))
 
+	# Shell-escape the paths before embedding them in the ProgramArguments
+	# bash -c string below - wrapping them in literal double quotes isn't
+	# enough if either path ever contained a shell-special character (e.g.
+	# a space, "$", or a literal quote), which would corrupt or break the
+	# job's own self-cleanup step.
+	local trigger_script_q retry_plist_path_q
+	printf -v trigger_script_q '%q' "$TRIGGER_SCRIPT"
+	printf -v retry_plist_path_q '%q' "$RETRY_PLIST_PATH"
+
+	# Replace any still-pending retry from an earlier failed attempt
+	# BEFORE writing the new plist below - cancel_retry also removes
+	# RETRY_PLIST_PATH, which would otherwise delete the file this
+	# function is about to write if called afterwards.
+	cancel_retry
+
 	cat >"$RETRY_PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -255,7 +270,7 @@ schedule_retry() {
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>"$TRIGGER_SCRIPT"; rm -f "$RETRY_PLIST_PATH"; launchctl bootout "gui/\$(id -u)/$RETRY_LABEL" 2>/dev/null</string>
+        <string>$trigger_script_q; rm -f $retry_plist_path_q; launchctl bootout "gui/\$(id -u)/$RETRY_LABEL" 2>/dev/null</string>
     </array>
 
     <key>EnvironmentVariables</key>
@@ -292,9 +307,6 @@ EOF
 	local uid
 	uid=$(id -u)
 
-	# Replace any still-pending retry from an earlier failed attempt.
-	launchctl bootout "gui/$uid/$RETRY_LABEL" >/dev/null 2>&1 || true
-
 	if launchctl bootstrap "gui/$uid" "$RETRY_PLIST_PATH" 2>&1; then
 		print_status "Scheduled retry for $(date -r "$epoch")"
 		log_to_system "Scheduled precise retry at $(date -r "$epoch") after usage-limit rejection"
@@ -304,6 +316,17 @@ EOF
 		rm -f "$RETRY_PLIST_PATH"
 		return 1
 	fi
+}
+
+# Cancel any still-pending precise retry (used both to replace a stale one
+# before scheduling a new one, and to clean up after a later trigger - the
+# regular schedule or a manual `ccblocks trigger` - already succeeded, so a
+# still-armed retry doesn't fire needlessly). Safe to call when none exists.
+cancel_retry() {
+	local uid
+	uid=$(id -u)
+	launchctl bootout "gui/$uid/$RETRY_LABEL" >/dev/null 2>&1 || true
+	rm -f "$RETRY_PLIST_PATH"
 }
 
 # Check LaunchAgent status
@@ -392,6 +415,7 @@ show_usage() {
 	echo "  remove            - Remove LaunchAgent completely"
 	echo "  logs              - Show recent logs"
 	echo "  retry <epoch>     - Schedule a one-shot retry at the given Unix epoch"
+	echo "  cancel            - Cancel a still-pending precise retry, if any"
 	echo ""
 	echo "Examples:"
 	echo "  $0 create 247    # Create with 24/7 schedule"
@@ -443,6 +467,9 @@ main() {
 			return 1
 		fi
 		schedule_retry "$epoch"
+		;;
+	cancel)
+		cancel_retry
 		;;
 	logs)
 		echo "Showing ccblocks logs from system log (last 24 hours):"

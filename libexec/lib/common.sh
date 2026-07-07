@@ -345,28 +345,45 @@ _ccblocks_epoch_for_datetime() {
 }
 
 # Extract a usage-limit reset time from Claude's error text and print it as
-# a Unix epoch on stdout. Returns 1 with no output if no clock-time token
-# is found (caller should fall back to the regular scheduled trigger).
+# a Unix epoch on stdout, a minute after the parsed reset moment (the
+# message only ever gives whole minutes, so the true server-side reset
+# could land anywhere inside that minute or lag it slightly - firing right
+# at/before it risks racing the actual reset). Returns 1 with no output if
+# no clock-time token is found (caller should fall back to the regular
+# scheduled trigger).
 parse_reset_epoch() {
 	local text="$1"
 
+	# Prefer to look for the reset time near the word "reset(s)" when
+	# present, since every known message variant has used it so far and it
+	# disambiguates which of several clock-time-shaped substrings in a
+	# longer message (e.g. "As of 11:59pm, your account resets 1:40am") is
+	# the actual reset time. Falls back to scanning the whole text when
+	# it's absent, to stay tolerant of a wording change that drops it.
+	local text_lower search_text="$text"
+	text_lower=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+	if [[ "$text_lower" == *reset* ]]; then
+		local prefix="${text_lower%%reset*}"
+		search_text="${text:${#prefix}}"
+	fi
+
 	# Clock time, with or without minutes: "1:40am", "1:40 AM", "4pm".
-	local time_token hh mm ampm
-	time_token=$(printf '%s' "$text" | grep -Eio '[0-9]{1,2}:[0-9]{2}[[:space:]]*[ap]m' | head -1)
-	if [ -n "$time_token" ]; then
-		time_token=$(printf '%s' "$time_token" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+	local time_token time_token_raw hh mm ampm
+	time_token_raw=$(printf '%s' "$search_text" | grep -Eio '[0-9]{1,2}:[0-9]{2}[[:space:]]*[ap]m' | head -1)
+	if [ -n "$time_token_raw" ]; then
+		time_token=$(printf '%s' "$time_token_raw" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
 		ampm="${time_token: -2}"
 		local hhmm="${time_token%??}"
 		hh="${hhmm%%:*}"
 		mm="${hhmm#*:}"
 	else
-		time_token=$(printf '%s' "$text" |
+		time_token_raw=$(printf '%s' "$search_text" |
 			grep -Eio '(^|[^0-9])[0-9]{1,2}[[:space:]]*[ap]m([^a-zA-Z]|$)' |
 			grep -Eio '[0-9]{1,2}[[:space:]]*[ap]m' | head -1)
-		if [ -z "$time_token" ]; then
+		if [ -z "$time_token_raw" ]; then
 			return 1
 		fi
-		time_token=$(printf '%s' "$time_token" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+		time_token=$(printf '%s' "$time_token_raw" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
 		ampm="${time_token: -2}"
 		hh="${time_token%??}"
 		mm=0
@@ -383,17 +400,31 @@ parse_reset_epoch() {
 		[ "$hh" -ne 12 ] && hh=$((hh + 12))
 	fi
 
-	# Optional parenthesised IANA timezone, e.g. "(Europe/London)".
-	local tz
-	tz=$(printf '%s' "$text" | grep -Eo '\([A-Za-z_]+/[A-Za-z_]+\)' | head -1 | tr -d '()')
+	# Optional parenthesised IANA timezone, e.g. "(Europe/London)". Only
+	# looked for in a short window right after the matched time token (not
+	# the first parenthetical anywhere in the text) so an unrelated
+	# parenthetical elsewhere in the message can't be mistaken for it, and
+	# validated against the system's own zoneinfo database so a bogus or
+	# decoy zone name falls back to local-time interpretation instead of
+	# silently producing a wrong epoch (GNU/BSD date both accept an
+	# unrecognised TZ value and silently treat it as UTC rather than
+	# erroring, so an unvalidated match would fail open, not closed).
+	local tz="" tz_tail
+	tz_tail="${search_text#*"$time_token_raw"}"
+	tz_tail="${tz_tail:0:40}"
+	tz=$(printf '%s' "$tz_tail" | grep -Eo '\([A-Za-z_]+(/[A-Za-z_]+)+\)' | head -1 | tr -d '()')
+	if [ -n "$tz" ] && [ ! -e "/usr/share/zoneinfo/$tz" ]; then
+		tz=""
+	fi
 
-	# Optional weekday name anywhere in the text. Boundary-guarded on both
-	# sides with an exhaustive list of full/abbreviated spellings (rather
-	# than a day-prefix plus a wildcard suffix) so an incidental substring
-	# like "month" or "satisfy" can't be mistaken for one.
+	# Optional weekday name anywhere in the (reset-anchored) text. Boundary-
+	# guarded on both sides with an exhaustive list of full/abbreviated
+	# spellings (rather than a day-prefix plus a wildcard suffix) so an
+	# incidental substring like "month" or "satisfy" can't be mistaken for
+	# one.
 	local weekday_alts='monday|mon|tuesday|tues|tue|wednesday|wed|thursday|thurs|thur|thu|friday|fri|saturday|sat|sunday|sun'
 	local weekday_name weekday_target=""
-	weekday_name=$(printf '%s' "$text" |
+	weekday_name=$(printf '%s' "$search_text" |
 		grep -Eio "(^|[^a-zA-Z])(${weekday_alts})([^a-zA-Z]|\$)" |
 		grep -Eio "${weekday_alts}" |
 		head -1 | tr '[:upper:]' '[:lower:]')
@@ -422,7 +453,7 @@ parse_reset_epoch() {
 		delta_days=$(((weekday_target - today_wd + 7) % 7))
 	fi
 
-	local target_date epoch now_epoch
+	local target_date epoch now_epoch now_minute_epoch
 	target_date=$(_ccblocks_date_plus_days "$today_date" "$delta_days") || return 1
 	[ -z "$target_date" ] && return 1
 
@@ -430,10 +461,17 @@ parse_reset_epoch() {
 	[ -z "$epoch" ] && return 1
 
 	now_epoch=$(date +%s)
+	# Truncate to the start of the current minute before comparing: the
+	# parsed time is always :00 seconds (messages only ever give HH:MM),
+	# so comparing against the exact current second would treat a target
+	# equal to "this very minute" as already hours/days in the past -
+	# rolling a full day/week forward - purely because of the seconds
+	# already elapsed within that same minute.
+	now_minute_epoch=$((now_epoch - (now_epoch % 60)))
 
 	# An already-past moment means "the next occurrence": roll forward a
 	# day (no weekday named) or a week (weekday named).
-	if [ "$epoch" -le "$now_epoch" ]; then
+	if [ "$epoch" -lt "$now_minute_epoch" ]; then
 		local roll_days=1
 		[ -n "$weekday_target" ] && roll_days=7
 		target_date=$(_ccblocks_date_plus_days "$today_date" "$((delta_days + roll_days))") || return 1
@@ -441,7 +479,7 @@ parse_reset_epoch() {
 		[ -z "$epoch" ] && return 1
 	fi
 
-	printf '%s\n' "$epoch"
+	printf '%s\n' "$((epoch + 60))"
 }
 
 # Get helper script path based on OS

@@ -73,20 +73,33 @@ fi
 
 require_subscription_auth "$CLAUDE_BIN"
 
+# OS-appropriate scheduler helper, used below to schedule a precise retry
+# on failure and to cancel any still-pending one on success.
+helper_script="$SCRIPT_DIR/lib/systemd-helper.sh"
+[ "$(uname)" = "Darwin" ] && helper_script="$SCRIPT_DIR/lib/launchagent-helper.sh"
+
 # Trigger new 5-hour block
 timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-# Run claude, capturing combined output so a failure can be parsed for a
-# usage-limit reset time (see the retry scheduling below). Default silences
-# it on success but still shows it on failure so errors land in logs;
-# CCBLOCKS_DEBUG=1 always shows it.
+# Run claude, capturing stdout and stderr separately so this preserves the
+# pre-existing behaviour exactly: stdout is suppressed unless
+# CCBLOCKS_DEBUG=1, but stderr is always shown regardless of success or
+# failure. The combined text is also kept in claude_output so a failure can
+# be parsed for a usage-limit reset time (see the retry scheduling below).
+stdout_tmp=$(mktemp)
+stderr_tmp=$(mktemp)
 rc=0
-claude_output=$(run_claude_subscription_trigger "$CLAUDE_BIN" 2>&1) || rc=$?
+run_claude_subscription_trigger "$CLAUDE_BIN" >"$stdout_tmp" 2>"$stderr_tmp" || rc=$?
+claude_stdout=$(cat "$stdout_tmp")
+claude_stderr=$(cat "$stderr_tmp")
+rm -f "$stdout_tmp" "$stderr_tmp"
+claude_output="$claude_stdout"$'\n'"$claude_stderr"
 
-if [ "${CCBLOCKS_DEBUG:-0}" -ne 0 ]; then
-	printf '%s\n' "$claude_output"
-elif [ "$rc" -ne 0 ]; then
-	printf '%s\n' "$claude_output" >&2
+if [ "${CCBLOCKS_DEBUG:-0}" -ne 0 ] && [ -n "$claude_stdout" ]; then
+	printf '%s\n' "$claude_stdout"
+fi
+if [ -n "$claude_stderr" ]; then
+	printf '%s\n' "$claude_stderr" >&2
 fi
 
 if [ $rc -eq 0 ]; then
@@ -143,6 +156,12 @@ if [ $rc -eq 0 ]; then
 	# Save last activity timestamp
 	echo "$timestamp" >"$CCBLOCKS_CONFIG/.last-activity" 2>/dev/null || true
 
+	# This trigger succeeded, so cancel any precise retry still pending
+	# from an earlier failure (the regular schedule or a manual `ccblocks
+	# trigger` beat it to a new block) - otherwise it would still fire
+	# later, uselessly pinging an already-active block.
+	[ -x "$helper_script" ] && "$helper_script" cancel >/dev/null 2>&1
+
 	# Log to system
 	log_to_system "Successfully triggered new 5-hour block at $timestamp"
 	exit 0
@@ -159,9 +178,6 @@ else
 	if [ "${CCBLOCKS_RETRY_ATTEMPT:-0}" != "1" ]; then
 		reset_epoch=""
 		if reset_epoch=$(parse_reset_epoch "$claude_output"); then
-			helper_script="$SCRIPT_DIR/lib/systemd-helper.sh"
-			[ "$(uname)" = "Darwin" ] && helper_script="$SCRIPT_DIR/lib/launchagent-helper.sh"
-
 			if [ -x "$helper_script" ] && "$helper_script" retry "$reset_epoch" >/dev/null 2>&1; then
 				log_to_system "Scheduled a precise retry after usage-limit rejection"
 			else
