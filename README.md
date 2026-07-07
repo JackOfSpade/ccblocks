@@ -144,6 +144,8 @@ ccblocks provides:
 5. New 5-hour block starts immediately
 6. Logs success/failure to system log
 
+**If the trigger is rejected for hitting a usage limit:** Claude's own error text includes a reset time (e.g. "resets 1:40am (Europe/London)" or "Resets Sat 2:00 AM"). ccblocks parses that clock time - tolerant of the exact wording, which has changed between CLI versions - and schedules exactly one precise retry for a minute after it, instead of either polling blindly or waiting for the next regularly scheduled slot. The retry runs as a separate one-shot job (a transient `systemd-run --user` timer on Linux, a second self-cleaning LaunchAgent on macOS) so the regular schedule is untouched, and it never chains into further retries - if the retry itself fails, ccblocks falls back to waiting for the next scheduled trigger. If no reset time can be parsed from the message, ccblocks also falls back to the next scheduled trigger.
+
 ## Status & Monitoring
 
 ```bash

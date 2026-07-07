@@ -294,6 +294,156 @@ run_claude_subscription_trigger() {
 		"Reply exactly: OK"
 }
 
+# --- Usage-limit reset time parsing -------------------------------------
+#
+# When a trigger is rejected for hitting a usage limit, Claude's own error
+# text includes a human-readable reset time, e.g.:
+#   "You've hit your session limit · resets 1:40am (Europe/London)"
+#   "Claude usage limit reached. Your limit will reset at 4pm."
+# The surrounding sentence has already changed once between CLI versions
+# (see setup.sh's "session limit" comment), so parse_reset_epoch only
+# anchors on parts unlikely to change: a clock-time token, an optional
+# weekday name, and an optional parenthesised IANA timezone. This lets a
+# failed trigger be retried once, precisely when it'll actually work,
+# instead of either waiting for the next scheduled slot or polling blindly.
+
+# Internal: add N days to a YYYY-MM-DD date, bridging GNU vs BSD date(1).
+_ccblocks_date_plus_days() {
+	local base_date="$1" days="$2"
+
+	if [ "$days" -eq 0 ]; then
+		printf '%s\n' "$base_date"
+		return 0
+	fi
+
+	if [ "$(uname)" = "Darwin" ]; then
+		date -j -v "+${days}d" -f "%Y-%m-%d" "$base_date" +%Y-%m-%d 2>/dev/null
+	else
+		date -d "$base_date +${days} days" +%Y-%m-%d 2>/dev/null
+	fi
+}
+
+# Internal: convert a "YYYY-MM-DD HH:MM" wall-clock string to a Unix epoch,
+# optionally interpreted in the given IANA timezone. Bridges GNU (`date -d`)
+# vs BSD/macOS (`date -j -f`) date(1).
+_ccblocks_epoch_for_datetime() {
+	local datetime="$1" tz="${2:-}"
+
+	if [ "$(uname)" = "Darwin" ]; then
+		if [ -n "$tz" ]; then
+			TZ="$tz" date -j -f "%Y-%m-%d %H:%M" "$datetime" +%s 2>/dev/null
+		else
+			date -j -f "%Y-%m-%d %H:%M" "$datetime" +%s 2>/dev/null
+		fi
+	else
+		if [ -n "$tz" ]; then
+			TZ="$tz" date -d "$datetime" +%s 2>/dev/null
+		else
+			date -d "$datetime" +%s 2>/dev/null
+		fi
+	fi
+}
+
+# Extract a usage-limit reset time from Claude's error text and print it as
+# a Unix epoch on stdout. Returns 1 with no output if no clock-time token
+# is found (caller should fall back to the regular scheduled trigger).
+parse_reset_epoch() {
+	local text="$1"
+
+	# Clock time, with or without minutes: "1:40am", "1:40 AM", "4pm".
+	local time_token hh mm ampm
+	time_token=$(printf '%s' "$text" | grep -Eio '[0-9]{1,2}:[0-9]{2}[[:space:]]*[ap]m' | head -1)
+	if [ -n "$time_token" ]; then
+		time_token=$(printf '%s' "$time_token" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+		ampm="${time_token: -2}"
+		local hhmm="${time_token%??}"
+		hh="${hhmm%%:*}"
+		mm="${hhmm#*:}"
+	else
+		time_token=$(printf '%s' "$text" |
+			grep -Eio '(^|[^0-9])[0-9]{1,2}[[:space:]]*[ap]m([^a-zA-Z]|$)' |
+			grep -Eio '[0-9]{1,2}[[:space:]]*[ap]m' | head -1)
+		if [ -z "$time_token" ]; then
+			return 1
+		fi
+		time_token=$(printf '%s' "$time_token" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+		ampm="${time_token: -2}"
+		hh="${time_token%??}"
+		mm=0
+	fi
+
+	hh=$((10#$hh))
+	mm=$((10#$mm))
+	if [ "$hh" -lt 1 ] || [ "$hh" -gt 12 ] || [ "$mm" -gt 59 ]; then
+		return 1
+	fi
+	if [ "$ampm" = "am" ]; then
+		[ "$hh" -eq 12 ] && hh=0
+	else
+		[ "$hh" -ne 12 ] && hh=$((hh + 12))
+	fi
+
+	# Optional parenthesised IANA timezone, e.g. "(Europe/London)".
+	local tz
+	tz=$(printf '%s' "$text" | grep -Eo '\([A-Za-z_]+/[A-Za-z_]+\)' | head -1 | tr -d '()')
+
+	# Optional weekday name anywhere in the text. Boundary-guarded on both
+	# sides with an exhaustive list of full/abbreviated spellings (rather
+	# than a day-prefix plus a wildcard suffix) so an incidental substring
+	# like "month" or "satisfy" can't be mistaken for one.
+	local weekday_alts='monday|mon|tuesday|tues|tue|wednesday|wed|thursday|thurs|thur|thu|friday|fri|saturday|sat|sunday|sun'
+	local weekday_name weekday_target=""
+	weekday_name=$(printf '%s' "$text" |
+		grep -Eio "(^|[^a-zA-Z])(${weekday_alts})([^a-zA-Z]|\$)" |
+		grep -Eio "${weekday_alts}" |
+		head -1 | tr '[:upper:]' '[:lower:]')
+	case "$weekday_name" in
+	mon*) weekday_target=1 ;;
+	tue*) weekday_target=2 ;;
+	wed*) weekday_target=3 ;;
+	thu*) weekday_target=4 ;;
+	fri*) weekday_target=5 ;;
+	sat*) weekday_target=6 ;;
+	sun*) weekday_target=7 ;;
+	esac
+
+	local today_date today_wd
+	if [ -n "$tz" ]; then
+		today_date=$(TZ="$tz" date +%Y-%m-%d 2>/dev/null) || return 1
+		today_wd=$(TZ="$tz" date +%u 2>/dev/null) || return 1
+	else
+		today_date=$(date +%Y-%m-%d)
+		today_wd=$(date +%u)
+	fi
+	[ -z "$today_date" ] && return 1
+
+	local delta_days=0
+	if [ -n "$weekday_target" ]; then
+		delta_days=$(((weekday_target - today_wd + 7) % 7))
+	fi
+
+	local target_date epoch now_epoch
+	target_date=$(_ccblocks_date_plus_days "$today_date" "$delta_days") || return 1
+	[ -z "$target_date" ] && return 1
+
+	epoch=$(_ccblocks_epoch_for_datetime "$(printf '%s %02d:%02d' "$target_date" "$hh" "$mm")" "$tz") || return 1
+	[ -z "$epoch" ] && return 1
+
+	now_epoch=$(date +%s)
+
+	# An already-past moment means "the next occurrence": roll forward a
+	# day (no weekday named) or a week (weekday named).
+	if [ "$epoch" -le "$now_epoch" ]; then
+		local roll_days=1
+		[ -n "$weekday_target" ] && roll_days=7
+		target_date=$(_ccblocks_date_plus_days "$today_date" "$((delta_days + roll_days))") || return 1
+		epoch=$(_ccblocks_epoch_for_datetime "$(printf '%s %02d:%02d' "$target_date" "$hh" "$mm")" "$tz") || return 1
+		[ -z "$epoch" ] && return 1
+	fi
+
+	printf '%s\n' "$epoch"
+}
+
 # Get helper script path based on OS
 get_helper_script() {
 	local script_dir="${1:-}"
@@ -531,3 +681,4 @@ export -f install_err_trap handle_ccblocks_error
 export -f preset_hours preset_weekdays
 export -f json_string_value json_bool_value require_subscription_auth run_claude_subscription_trigger
 export -f read_schedule_config write_schedule_config validate_custom_hours calculate_coverage
+export -f _ccblocks_date_plus_days _ccblocks_epoch_for_datetime parse_reset_epoch

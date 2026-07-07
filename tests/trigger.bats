@@ -298,3 +298,81 @@ shift
     assert_output --partial "[DEBUG]"
     assert_output --partial "Unexpected format"
 }
+
+# Precise-retry scheduling tests
+#
+# Sandboxes a copy of libexec so the OS scheduler helper (systemd-helper.sh
+# or launchagent-helper.sh) can be replaced with a call recorder, without
+# ever touching the real repository file or a real scheduler. Returns the
+# path to the sandboxed ccblocks-daemon.sh to run.
+create_mock_helper_for_retry() {
+    local calls_file="$1"
+
+    MOCK_LIBEXEC="${TEST_TEMP_DIR}/libexec"
+    cp -r "${PROJECT_ROOT}/libexec" "$MOCK_LIBEXEC"
+
+    local helper_dir="${MOCK_LIBEXEC}/lib"
+    local helper_name
+    if [[ "$(uname)" == "Darwin" ]]; then
+        helper_name="launchagent-helper.sh"
+    else
+        helper_name="systemd-helper.sh"
+    fi
+
+    cat > "${helper_dir}/${helper_name}" << EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "${calls_file}"
+exit 0
+EOF
+    chmod +x "${helper_dir}/${helper_name}"
+
+    echo "${MOCK_LIBEXEC}/ccblocks-daemon.sh"
+}
+
+@test "ccblocks-daemon schedules a precise retry when the failure message has a reset time" {
+    calls_file="${TEST_TEMP_DIR}/helper-calls.log"
+    daemon_script=$(create_mock_helper_for_retry "$calls_file")
+
+    mock_claude_with_auth "$(claude_auth_json)" '
+echo "You'"'"'ve hit your session limit · resets 1:40am (Europe/London)" >&2
+exit 1'
+
+    run "$daemon_script"
+    assert_failure
+    assert_file_contains "$calls_file" "^retry [0-9][0-9]*$"
+}
+
+@test "ccblocks-daemon does not schedule a retry when the failure message has no reset time" {
+    calls_file="${TEST_TEMP_DIR}/helper-calls.log"
+    daemon_script=$(create_mock_helper_for_retry "$calls_file")
+
+    mock_claude_failure
+
+    run "$daemon_script"
+    assert_failure
+    refute [ -f "$calls_file" ]
+}
+
+@test "ccblocks-daemon does not chain a retry from an already-retried attempt" {
+    calls_file="${TEST_TEMP_DIR}/helper-calls.log"
+    daemon_script=$(create_mock_helper_for_retry "$calls_file")
+
+    mock_claude_with_auth "$(claude_auth_json)" '
+echo "You'"'"'ve hit your session limit · resets 1:40am (Europe/London)" >&2
+exit 1'
+
+    CCBLOCKS_RETRY_ATTEMPT=1 run "$daemon_script"
+    assert_failure
+    refute [ -f "$calls_file" ]
+}
+
+@test "ccblocks-daemon does not invoke the OS helper at all on a successful trigger" {
+    calls_file="${TEST_TEMP_DIR}/helper-calls.log"
+    daemon_script=$(create_mock_helper_for_retry "$calls_file")
+
+    mock_claude_success
+
+    run "$daemon_script"
+    assert_success
+    refute [ -f "$calls_file" ]
+}

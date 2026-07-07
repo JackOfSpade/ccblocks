@@ -76,13 +76,17 @@ require_subscription_auth "$CLAUDE_BIN"
 # Trigger new 5-hour block
 timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-# Run claude: default silences stdout but preserves stderr so errors land in logs.
-# Set CCBLOCKS_DEBUG=1 to keep stdout as well.
+# Run claude, capturing combined output so a failure can be parsed for a
+# usage-limit reset time (see the retry scheduling below). Default silences
+# it on success but still shows it on failure so errors land in logs;
+# CCBLOCKS_DEBUG=1 always shows it.
 rc=0
+claude_output=$(run_claude_subscription_trigger "$CLAUDE_BIN" 2>&1) || rc=$?
+
 if [ "${CCBLOCKS_DEBUG:-0}" -ne 0 ]; then
-	run_claude_subscription_trigger "$CLAUDE_BIN" || rc=$?
-else
-	run_claude_subscription_trigger "$CLAUDE_BIN" >/dev/null || rc=$?
+	printf '%s\n' "$claude_output"
+elif [ "$rc" -ne 0 ]; then
+	printf '%s\n' "$claude_output" >&2
 fi
 
 if [ $rc -eq 0 ]; then
@@ -145,5 +149,26 @@ if [ $rc -eq 0 ]; then
 else
 	# Log failure to system
 	log_to_system "Failed to trigger block at $timestamp"
+
+	# If the rejection told us exactly when it'll next succeed (Claude's
+	# usage-limit messages include a reset time, e.g. "resets 1:40am"),
+	# schedule one precise retry instead of waiting for the next regular
+	# scheduled slot. CCBLOCKS_RETRY_ATTEMPT guards against chaining: a
+	# retry that itself fails just gives up rather than scheduling
+	# another one, so this adds at most one extra attempt per trigger.
+	if [ "${CCBLOCKS_RETRY_ATTEMPT:-0}" != "1" ]; then
+		reset_epoch=""
+		if reset_epoch=$(parse_reset_epoch "$claude_output"); then
+			helper_script="$SCRIPT_DIR/lib/systemd-helper.sh"
+			[ "$(uname)" = "Darwin" ] && helper_script="$SCRIPT_DIR/lib/launchagent-helper.sh"
+
+			if [ -x "$helper_script" ] && "$helper_script" retry "$reset_epoch" >/dev/null 2>&1; then
+				log_to_system "Scheduled a precise retry after usage-limit rejection"
+			else
+				log_to_system "Could not schedule a precise retry; will wait for the next scheduled trigger"
+			fi
+		fi
+	fi
+
 	exit 1
 fi

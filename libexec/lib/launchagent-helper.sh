@@ -16,6 +16,9 @@ source "$SCRIPT_DIR/common.sh"
 LABEL="ccblocks"
 PLIST_PATH="$HOME/Library/LaunchAgents/ccblocks.plist"
 
+RETRY_LABEL="ccblocks-retry"
+RETRY_PLIST_PATH="$HOME/Library/LaunchAgents/${RETRY_LABEL}.plist"
+
 # Resolve TRIGGER_SCRIPT path - use version-independent path for Homebrew
 # If installed via Homebrew, paths contain /Cellar/ccblocks/VERSION/ which breaks on upgrade
 # Replace with /opt/ccblocks/ symlink which always points to current version
@@ -212,6 +215,97 @@ start_agent() {
 	print_status "LaunchAgent started (triggered manually)"
 }
 
+# Schedule a one-shot retry of the trigger at the given Unix epoch (used
+# when a failed trigger's usage-limit message told us exactly when it'll
+# next succeed). Writes a second, distinct LaunchAgent plist so the
+# persistent schedule's own plist is untouched. StartCalendarInterval has
+# no "year" key, so a plist left in place would silently refire on the
+# same month/day/hour/minute next year - the job therefore deletes its
+# own plist (and best-effort unloads itself) immediately after running,
+# success or failure, so nothing lingers. Because ~/Library/LaunchAgents
+# is rescanned by launchd on every login, this survives a reboot between
+# now and the target time the same way the regular schedule does.
+schedule_retry() {
+	local epoch="$1"
+	local month_raw day_raw hour_raw minute_raw
+
+	month_raw=$(date -r "$epoch" +%m 2>/dev/null) || return 1
+	day_raw=$(date -r "$epoch" +%d 2>/dev/null) || return 1
+	hour_raw=$(date -r "$epoch" +%H 2>/dev/null) || return 1
+	minute_raw=$(date -r "$epoch" +%M 2>/dev/null) || return 1
+	if [ -z "$month_raw" ] || [ -z "$day_raw" ] || [ -z "$hour_raw" ] || [ -z "$minute_raw" ]; then
+		return 1
+	fi
+
+	local month day hour minute
+	month=$((10#$month_raw))
+	day=$((10#$day_raw))
+	hour=$((10#$hour_raw))
+	minute=$((10#$minute_raw))
+
+	cat >"$RETRY_PLIST_PATH" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$RETRY_LABEL</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>"$TRIGGER_SCRIPT"; rm -f "$RETRY_PLIST_PATH"; launchctl bootout "gui/\$(id -u)/$RETRY_LABEL" 2>/dev/null</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>$PATH</string>
+        <key>CCBLOCKS_RETRY_ATTEMPT</key>
+        <string>1</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>$HOME/Library/Logs/ccblocks.log</string>
+    <key>StandardErrorPath</key>
+    <string>$HOME/Library/Logs/ccblocks.log</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Month</key>
+        <integer>$month</integer>
+        <key>Day</key>
+        <integer>$day</integer>
+        <key>Hour</key>
+        <integer>$hour</integer>
+        <key>Minute</key>
+        <integer>$minute</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
+EOF
+
+	local uid
+	uid=$(id -u)
+
+	# Replace any still-pending retry from an earlier failed attempt.
+	launchctl bootout "gui/$uid/$RETRY_LABEL" >/dev/null 2>&1 || true
+
+	if launchctl bootstrap "gui/$uid" "$RETRY_PLIST_PATH" 2>&1; then
+		print_status "Scheduled retry for $(date -r "$epoch")"
+		log_to_system "Scheduled precise retry at $(date -r "$epoch") after usage-limit rejection"
+		return 0
+	else
+		print_warning "Failed to schedule retry via launchd"
+		rm -f "$RETRY_PLIST_PATH"
+		return 1
+	fi
+}
+
 # Check LaunchAgent status
 status_agent() {
 	echo "ccblocks LaunchAgent Status"
@@ -297,6 +391,7 @@ show_usage() {
 	echo "  status            - Show LaunchAgent status"
 	echo "  remove            - Remove LaunchAgent completely"
 	echo "  logs              - Show recent logs"
+	echo "  retry <epoch>     - Schedule a one-shot retry at the given Unix epoch"
 	echo ""
 	echo "Examples:"
 	echo "  $0 create 247    # Create with 24/7 schedule"
@@ -340,6 +435,14 @@ main() {
 		;;
 	remove)
 		remove_agent
+		;;
+	retry)
+		local epoch="${2:-}"
+		if [ -z "$epoch" ]; then
+			print_error "Epoch timestamp required"
+			return 1
+		fi
+		schedule_retry "$epoch"
 		;;
 	logs)
 		echo "Showing ccblocks logs from system log (last 24 hours):"
