@@ -46,90 +46,26 @@ Environment=PATH=$PATH
 EOF
 }
 
-# Write the systemd timer unit file for the given OnCalendar expression.
-# Shared by create_service (presets) and create_service_custom.
+# Write the systemd timer unit file using a fixed repeating interval.
+# This replaces the old OnCalendar approach so there is no schedule to
+# configure - the timer fires every 15 minutes after activation.
 write_timer_file() {
-	local oncalendar="$1"
-
 	cat >"$TIMER_FILE" <<EOF
 [Unit]
 Description=ccblocks Scheduling Timer (%i)
 
 [Timer]
-OnCalendar=$oncalendar
+OnBootSec=15min
+OnUnitActiveSec=15min
 Persistent=true
 EOF
 }
 
-# Zero-pad and comma-join hours for systemd OnCalendar syntax. Accepts
-# either space-separated (e.g. "9 14", from preset_hours) or
-# comma-separated (e.g. "9,14", from user input) input -> "09,14".
-# Shared by create_service and create_service_custom.
-format_oncalendar_hours() {
-	echo "$1" | tr ',' ' ' | awk '{for(i=1;i<=NF;i++) printf "%02d,", $i}' | sed 's/,$//'
-}
-
-# Map space-separated ISO weekday numbers (1=Monday..7=Sunday, matching
-# preset_weekdays' numbering) to a systemd OnCalendar day-of-week list,
-# e.g. "1 2 3 4 5" -> "Mon,Tue,Wed,Thu,Fri" (systemd itself normalizes a
-# contiguous list like that to "Mon..Fri"). Keeps systemd-helper.sh in
-# sync with launchagent-helper.sh, which already derives its Weekday
-# entries from the same preset_weekdays values instead of hardcoding a
-# day range - see the common.sh comment on preset_weekdays for why.
-weekdays_to_oncalendar() {
-	local -a names=(Sun Mon Tue Wed Thu Fri Sat) # index 0..6; ISO 7 (Sun) -> 0
-	local day list=""
-	for day in $1; do
-		list+="${list:+,}${names[$((day % 7))]}"
-	done
-	echo "$list"
-}
-
-# Create systemd service and timer files
+# Create systemd service and timer files (always 15-minute polling)
 create_service() {
-	local schedule="${1:-247}"
-
 	write_service_file
-
-	local hours weekdays
-	if ! hours=$(preset_hours "$schedule"); then
-		print_error "Unknown schedule: $schedule"
-		return 1
-	fi
-	if ! weekdays=$(preset_weekdays "$schedule"); then
-		print_error "Unknown schedule: $schedule"
-		return 1
-	fi
-
-	local formatted_hours
-	formatted_hours=$(format_oncalendar_hours "$hours")
-
-	local oncalendar
-	if [ -z "$weekdays" ]; then
-		oncalendar="*-*-* ${formatted_hours}:00:00"
-	else
-		oncalendar="$(weekdays_to_oncalendar "$weekdays") *-*-* ${formatted_hours}:00:00"
-	fi
-
-	write_timer_file "$oncalendar"
-
+	write_timer_file
 	print_status "Created systemd service and timer files"
-}
-
-# Create systemd service and timer files with custom hours
-create_service_custom() {
-	local hours_str="$1"
-
-	write_service_file
-
-	local formatted_hours
-	formatted_hours=$(format_oncalendar_hours "$hours_str")
-	local oncalendar="*-*-* ${formatted_hours}:00:00"
-
-	write_timer_file "$oncalendar"
-
-	print_status "Created custom systemd service and timer files"
-	print_status "Triggers at: ${hours_str}"
 }
 
 # Enable and start timer
@@ -237,9 +173,9 @@ status_service() {
 		echo "Status: ✅ Timer active"
 		echo ""
 
-		# Show timer schedule
+		# Show schedule
 		echo "Schedule:"
-		systemctl --user cat "${SERVICE_NAME}@default.timer" | grep "OnCalendar" | sed 's/^/  /'
+		echo "  Every 15 minutes"
 		echo ""
 
 		# Show next trigger
@@ -285,7 +221,7 @@ show_usage() {
 	echo "Note: This is an internal helper. Use 'ccblocks' command instead."
 	echo ""
 	echo "Commands:"
-	echo "  create [schedule]  - Create systemd service/timer (schedules: 247, work, night)"
+	echo "  create             - Create systemd service/timer (fires every 15 minutes)"
 	echo "  enable             - Enable and start timer"
 	echo "  disable            - Disable and stop timer"
 	echo "  reload             - Reload systemd (after manual edits)"
@@ -297,7 +233,7 @@ show_usage() {
 	echo "  cancel             - Cancel a still-pending precise retry, if any"
 	echo ""
 	echo "Examples:"
-	echo "  $0 create 247     # Create with 24/7 schedule"
+	echo "  $0 create          # Create with 15-minute polling"
 	echo "  $0 enable          # Enable the timer"
 	echo "  $0 status          # Check status"
 	echo "  $0 start           # Trigger immediately"
@@ -309,16 +245,11 @@ main() {
 
 	case "$command" in
 	create)
-		local schedule="${2:-247}"
-		create_service "$schedule"
+		create_service
 		;;
 	create_custom)
-		local hours="${2:-}"
-		if [ -z "$hours" ]; then
-			print_error "Custom hours required"
-			return 1
-		fi
-		create_service_custom "$hours"
+		print_error "Custom hour schedules are no longer supported; ccblocks now polls every 15 minutes"
+		exit 1
 		;;
 	enable)
 		enable_timer

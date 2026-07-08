@@ -47,12 +47,11 @@ agent_loaded() {
 	launchctl list | grep -w "$LABEL" >/dev/null
 }
 
-# Write the LaunchAgent plist with the given <dict>...</dict> interval
-# entries. Shared by create_plist (presets) and create_plist_custom so
-# the plist template only needs to be kept correct in one place.
+# Write the LaunchAgent plist using a fixed StartInterval (fires every N
+# seconds regardless of clock time). This replaces the old
+# StartCalendarInterval approach, which required guessing slot times and
+# missed windows when a trigger hit a 100%-usage limit mid-slot.
 write_plist() {
-	local intervals="$1"
-
 	cat >"$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -77,9 +76,8 @@ write_plist() {
     <key>StandardErrorPath</key>
     <string>$HOME/Library/Logs/ccblocks.log</string>
 
-    <key>StartCalendarInterval</key>
-    <array>$intervals
-    </array>
+    <key>StartInterval</key>
+    <integer>900</integer>
 
     <key>RunAtLoad</key>
     <false/>
@@ -88,79 +86,10 @@ write_plist() {
 EOF
 }
 
-# Create LaunchAgent plist
+# Create LaunchAgent plist (no preset argument needed - always 15-minute polling)
 create_plist() {
-	local schedule="${1:-247}"
-	local hours weekdays
-
-	if ! hours=$(preset_hours "$schedule"); then
-		print_error "Unknown schedule: $schedule"
-		return 1
-	fi
-	if ! weekdays=$(preset_weekdays "$schedule"); then
-		print_error "Unknown schedule: $schedule"
-		return 1
-	fi
-
-	local intervals=""
-	if [ -z "$weekdays" ]; then
-		for hour in $hours; do
-			intervals+="
-        <dict>
-            <key>Hour</key>
-            <integer>$hour</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>"
-		done
-	else
-		# launchd's Weekday key: 0 and 7 both mean Sunday, 1=Monday, ...,
-		# 6=Saturday (see launchd.plist(5)) - the same numbering
-		# preset_weekdays uses, so no translation is needed here.
-		for weekday in $weekdays; do
-			for hour in $hours; do
-				intervals+="
-        <dict>
-            <key>Hour</key>
-            <integer>$hour</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-            <key>Weekday</key>
-            <integer>$weekday</integer>
-        </dict>"
-			done
-		done
-	fi
-
-	write_plist "$intervals"
-
+	write_plist
 	print_status "Created LaunchAgent plist at: $PLIST_PATH"
-}
-
-# Create LaunchAgent plist with custom hours
-create_plist_custom() {
-	local hours_str="$1"
-
-	# Convert comma-separated hours to array
-	IFS=',' read -ra hours_array <<<"$hours_str"
-
-	# Build intervals XML
-	local intervals=""
-	for hour in "${hours_array[@]}"; do
-		hour=$(echo "$hour" | tr -d ' ')
-		intervals+="
-        <dict>
-            <key>Hour</key>
-            <integer>$hour</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>"
-	done
-
-	write_plist "$intervals"
-
-	print_status "Created custom LaunchAgent plist at: $PLIST_PATH"
-	print_status "Triggers at: ${hours_str}"
 }
 
 # Load LaunchAgent
@@ -348,25 +277,7 @@ status_agent() {
 
 		# Show schedule
 		echo "Schedule:"
-		if [ -f "$PLIST_PATH" ]; then
-			plutil -p "$PLIST_PATH" | awk '
-                /"Hour" =>/ { h = $NF }
-                /"Minute" =>/ { m = $NF }
-                /"Weekday" =>/ { w = $NF }
-                /}/ && h != "" && m != "" {
-                    wd = ""
-                    if (w == "0" || w == "7") wd = " (Sun)"
-                    else if (w == "1") wd = " (Mon)"
-                    else if (w == "2") wd = " (Tue)"
-                    else if (w == "3") wd = " (Wed)"
-                    else if (w == "4") wd = " (Thu)"
-                    else if (w == "5") wd = " (Fri)"
-                    else if (w == "6") wd = " (Sat)"
-                    printf "  %02d:%02d%s\n", h, m, wd
-                    h = m = w = ""
-                }
-            '
-		fi
+		echo "  Every 15 minutes"
 		echo ""
 
 		# Show recent activity from state file
@@ -406,22 +317,22 @@ show_usage() {
 	echo "Note: This is an internal helper. Use 'ccblocks' command instead."
 	echo ""
 	echo "Commands:"
-	echo "  create [schedule]  - Create LaunchAgent plist (schedules: 247, work, night)"
-	echo "  load              - Load LaunchAgent"
-	echo "  unload            - Unload LaunchAgent"
-	echo "  reload            - Reload LaunchAgent (unload + load)"
-	echo "  start             - Trigger LaunchAgent manually"
-	echo "  status            - Show LaunchAgent status"
-	echo "  remove            - Remove LaunchAgent completely"
-	echo "  logs              - Show recent logs"
-	echo "  retry <epoch>     - Schedule a one-shot retry at the given Unix epoch"
-	echo "  cancel            - Cancel a still-pending precise retry, if any"
+	echo "  create             - Create LaunchAgent plist (fires every 15 minutes)"
+	echo "  load               - Load LaunchAgent"
+	echo "  unload             - Unload LaunchAgent"
+	echo "  reload             - Reload LaunchAgent (unload + load)"
+	echo "  start              - Trigger LaunchAgent manually"
+	echo "  status             - Show LaunchAgent status"
+	echo "  remove             - Remove LaunchAgent completely"
+	echo "  logs               - Show recent logs"
+	echo "  retry <epoch>      - Schedule a one-shot retry at the given Unix epoch"
+	echo "  cancel             - Cancel a still-pending precise retry, if any"
 	echo ""
 	echo "Examples:"
-	echo "  $0 create 247    # Create with 24/7 schedule"
-	echo "  $0 load           # Load the LaunchAgent"
-	echo "  $0 status         # Check status"
-	echo "  $0 start          # Trigger immediately"
+	echo "  $0 create          # Create plist (15-minute polling)"
+	echo "  $0 load            # Load the LaunchAgent"
+	echo "  $0 status          # Check status"
+	echo "  $0 start           # Trigger immediately"
 }
 
 # Main command handler
@@ -430,16 +341,7 @@ main() {
 
 	case "$command" in
 	create)
-		local schedule="${2:-247}"
-		create_plist "$schedule"
-		;;
-	create_custom)
-		local hours="${2:-}"
-		if [ -z "$hours" ]; then
-			print_error "Custom hours required"
-			return 1
-		fi
-		create_plist_custom "$hours"
+		create_plist
 		;;
 	load)
 		load_agent

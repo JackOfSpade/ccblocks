@@ -63,58 +63,6 @@ check_current_block() {
 	echo ""
 }
 
-# Show schedule options
-show_schedule_options() {
-	echo ""
-	print_header "Choose Your Schedule"
-	echo ""
-	echo "1. 24/7 Maximum Coverage (Recommended)"
-	echo "   Triggers: 12 AM, 6 AM, 12 PM, 6 PM daily"
-	echo "   Coverage: ~20 hours/day with strategic gaps"
-	echo "   Best for: Heavy users, flexible schedules"
-	echo ""
-	echo "2. Work Hours Only"
-	echo "   Triggers: 9 AM, 2 PM on weekdays"
-	echo "   Coverage: 9 AM - 7 PM weekdays"
-	echo "   Best for: Standard work schedules"
-	echo ""
-	echo "3. Night Owl"
-	echo "   Triggers: 6 PM, 11 PM daily"
-	echo "   Coverage: 6 PM - 4 AM"
-	echo "   Best for: Evening/night coders"
-	echo ""
-}
-
-# Get schedule choice
-get_schedule_choice() {
-	while true; do
-		read -r -p "Select schedule [1-3] (default: 1): " choice
-		# Default to option 1 if empty
-		[[ -z "$choice" ]] && choice=1
-		case $choice in
-		1)
-			SCHEDULE="247"
-			SCHEDULE_NAME="24/7 Maximum Coverage"
-			break
-			;;
-		2)
-			SCHEDULE="work"
-			SCHEDULE_NAME="Work Hours Only"
-			break
-			;;
-		3)
-			SCHEDULE="night"
-			SCHEDULE_NAME="Night Owl"
-			break
-			;;
-		*)
-			echo "Please choose 1, 2, or 3"
-			;;
-		esac
-	done
-
-	print_status "Selected: $SCHEDULE_NAME"
-}
 
 # Install scheduler (LaunchAgent or systemd)
 install_scheduler() {
@@ -122,7 +70,7 @@ install_scheduler() {
 	print_status "Installing $SCHEDULER_NAME..."
 
 	# Create scheduler config using helper
-	if ! "$HELPER" create "$SCHEDULE"; then
+	if ! "$HELPER" create; then
 		print_error "Failed to create $SCHEDULER_NAME"
 		exit 1
 	fi
@@ -133,9 +81,6 @@ install_scheduler() {
 		exit 1
 	fi
 
-	# Persist schedule configuration
-	write_schedule_config "preset" "$SCHEDULE" ""
-
 	print_status "$SCHEDULER_NAME installed and active"
 }
 
@@ -144,16 +89,15 @@ show_completion() {
 	echo ""
 	print_header "[CCBLOCKS] Setup Complete! 🚀"
 	echo ""
-	print_status "Schedule: $SCHEDULE_NAME"
+	print_status "Schedule: every 15 minutes"
 	print_status "Scheduler: $SCHEDULER_NAME"
 	echo ""
-	echo "Your Claude blocks will now start automatically at scheduled times!"
+	echo "Your Claude blocks will now be triggered automatically every 15 minutes!"
 	echo "The $SCHEDULER_NAME runs in your user session with full authentication."
 	echo ""
 	echo "Next Steps:"
 	echo "  • Check status: ccblocks status"
 	echo "  • Test trigger: ccblocks trigger"
-	echo "  • Change schedule: ccblocks schedule list"
 	echo ""
 	print_status "Setup completed successfully"
 }
@@ -188,13 +132,9 @@ main() {
 	check_claude_cli
 	check_current_block
 
-	# Interactive setup
-	show_schedule_options
-	get_schedule_choice
-
 	# Confirm before proceeding
 	echo ""
-	print_warning "Ready to install $SCHEDULE_NAME schedule"
+	print_warning "Ready to install ccblocks (triggers every 15 minutes)"
 	read -r -p "Proceed with installation? [Y/n]: " confirm
 
 	# Default to yes if empty, or if user explicitly said no

@@ -41,41 +41,6 @@ echo ""
 # yet - that's not fatal, the rest of this dashboard should still print)
 "$HELPER" status || true
 
-# Show custom schedule details if configured
-if [ -f "$CONFIG_FILE" ]; then
-	if config_output=$(read_schedule_config 2>/dev/null); then
-		schedule_type=$(echo "$config_output" | grep "^type=" | cut -d'=' -f2)
-
-		if [ "$schedule_type" = "custom" ]; then
-			echo ""
-			print_header "Custom Schedule Details"
-			echo "=========================="
-
-			custom_hours=$(echo "$config_output" | grep "^custom_hours=" | cut -d'=' -f2)
-
-			if [ -n "$custom_hours" ]; then
-				echo "  Triggers: $custom_hours"
-
-				coverage_output=$(calculate_coverage "$custom_hours")
-				coverage_hours=$(echo "$coverage_output" | grep "^coverage=" | cut -d'=' -f2)
-				gap_hours=$(echo "$coverage_output" | grep "^gaps=" | cut -d'=' -f2)
-
-				echo "  Coverage: ${coverage_hours}h/day"
-				echo "  Gaps: ${gap_hours}h/day"
-
-				# Show optimality
-				if [ "$coverage_hours" -eq 20 ]; then
-					echo "  Status: ✓ Optimal coverage"
-				elif [ "$coverage_hours" -ge 15 ]; then
-					echo "  Status: Good coverage"
-				else
-					echo "  Status: Light coverage"
-				fi
-			fi
-		fi
-	fi
-fi
-
 echo ""
 LAST_ACTIVITY_FILE="$CCBLOCKS_CONFIG/.last-activity"
 if [ -f "$LAST_ACTIVITY_FILE" ]; then
