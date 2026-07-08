@@ -41,7 +41,9 @@ agent_exists() {
 
 # Check if LaunchAgent is loaded
 agent_loaded() {
-	launchctl list | grep -w "$LABEL" >/dev/null
+	local uid
+	uid=$(id -u)
+	launchctl print "gui/$uid/$LABEL" >/dev/null 2>&1
 }
 
 # Write the LaunchAgent plist using a fixed StartInterval (fires every N
