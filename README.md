@@ -30,26 +30,16 @@ Time-shift Claude sessions to match your working hours
 
 **Token cost:** intentionally minimal. ccblocks always uses Claude Code's `haiku` model alias with a tiny one-turn prompt.
 
-## Understanding the 5-Hour Block System
+## How Scheduling Works
 
-**Each Claude trigger starts a 5-hour usage window.** This is the fundamental constraint that shapes optimal scheduling:
+ccblocks runs a lightweight trigger every 15 minutes through the OS-native user scheduler:
 
-- **Maximum useful triggers: 4 per day** (24h ÷ 5h = 4.8)
-- **Minimum spacing: 5 hours** between triggers
-- **Optimal coverage: 20 hours/day** with 4 strategically-placed triggers
+- **macOS**: LaunchAgent with `StartInterval=900`
+- **Linux**: systemd user timer with `OnUnitActiveSec=15min`
+- **No schedule file to maintain**: pause/resume controls the scheduler
+- **Simple failure handling**: success or failure, the next attempt is just the next 15-minute scheduler tick
 
-**Why not more triggers?** Triggers within an active 5-hour window don't start new blocks—they're wasted. A 5th trigger would overlap an existing window without extending coverage.
-
-**Visualising the 247 Max schedule (optimal):**
-```
-00:00 ━━━━━ 05:00 (gap) 06:00 ━━━━━ 11:00 (gap) 12:00 ━━━━━ 17:00 (gap) 18:00 ━━━━━ 23:00 (gap)
-      5h                      5h                      5h                      5h
-```
-**Result:** 20 hours of coverage with 4 hours of strategic gaps (5-6 AM, 11 AM-12 PM, 5-6 PM, 11 PM-12 AM).
-
-**Key insight:** More triggers ≠ more coverage. Strategic placement maximises available hours while respecting the 5-hour window constraint.
-
-**Important:** If you use Claude during a scheduled gap, you'll immediately trigger a new 5-hour block regardless of your ccblocks schedule. This is why it's best to align your schedule with your daily routine: plan gaps during lunch, gym, meetings, or quiet time when you won't be coding.
+Polling every 15 minutes keeps setup simple and avoids missing a new usage window because a fixed clock-time trigger happened while Claude was still rate-limited.
 
 ## Quick Start
 
@@ -67,38 +57,15 @@ This fork is distributed via its own [personal Homebrew tap](https://github.com/
 
 **Platform Support:** macOS and Linux only. Windows is not currently supported ([contribute!](https://github.com/JackOfSpade/ccblocks/issues)).
 
-## Schedules
-
-**247 Maximum Coverage** (Recommended)
-```
-Triggers: 12 AM, 6 AM, 12 PM, 6 PM daily (4 triggers)
-Coverage: 20 hours/day (optimal)
-Gaps: 5-6 AM, 11 AM-12 PM, 5-6 PM, 11 PM-12 AM (4h total)
-```
-
-**Work Hours Only**
-```
-Triggers: 9 AM, 2 PM on weekdays (2 triggers)
-Coverage: 10 hours/day (9 AM - 7 PM)
-Gaps: 7 PM - 9 AM (14h)
-```
-
-**Night Owl**
-```
-Triggers: 6 PM, 11 PM daily (2 triggers)
-Coverage: 10 hours/day (6 PM - 4 AM)
-Gaps: 4 AM - 6 PM (14h)
-```
-
 ## Commands
 
 ```bash
 ccblocks setup                         # Install and configure
-ccblocks status                        # Show schedule and recent activity
-ccblocks schedule list                 # List available schedules
-ccblocks schedule apply <name>         # Apply preset schedule (247, work, night)
-ccblocks schedule apply custom         # Interactive custom schedule
-ccblocks schedule apply custom 0,8,16  # Custom schedule with hours
+ccblocks status                        # Show scheduler and recent activity
+ccblocks schedule current              # Show current scheduler status
+ccblocks schedule pause                # Disable scheduler
+ccblocks schedule resume               # Re-enable scheduler
+ccblocks schedule remove               # Remove scheduler files
 ccblocks pause                         # Vacation mode
 ccblocks resume                        # Resume after vacation
 ccblocks uninstall                     # Complete removal
@@ -115,8 +82,8 @@ No. ccblocks is designed for Claude subscription users. It refuses to trigger wh
 **How much does this cost in tokens?**
 Each trigger sends a tiny one-turn prompt to Claude Code's cheapest model alias, `haiku`, and expects a short acknowledgement.
 
-**Can I customise the schedule?**
-Yes! See [Configuration](#configuration) for preset schedules and custom schedule options.
+**Can I change the timing?**
+No. ccblocks now uses fixed 15-minute polling. Use `ccblocks pause` and `ccblocks resume` to control when it runs.
 
 **Why not just use cron or a bash loop?**
 
@@ -126,7 +93,7 @@ You *can* - many users successfully schedule triggers with:
 
 ccblocks provides:
 - **Reliability**: Automatic restart, survives reboots
-- **Management**: Easy schedule changes, pause/resume, status monitoring
+- **Management**: Easy pause/resume and status monitoring
 - **Best practices**: OS-native service managers (LaunchAgent/systemd)
 - **Observability**: System logs, failure notifications
 
@@ -137,14 +104,14 @@ ccblocks provides:
 - **Linux**: systemd user service (`~/.config/systemd/user/ccblocks@.service`)
 
 **Trigger mechanism:**
-1. LaunchAgent/systemd timer fires at scheduled time
+1. LaunchAgent/systemd timer fires every 15 minutes
 2. Executes `ccblocks-daemon` in your user session
 3. Confirms Claude subscription auth is active and API/provider credentials are not present
 4. Runs `claude -p --safe-mode --model haiku --max-turns 1 --tools "" --output-format text ...`
 5. New 5-hour block starts immediately
 6. Logs success/failure to system log
 
-**If the trigger is rejected for hitting a usage limit:** Claude's own error text includes a reset time (e.g. "resets 1:40am (Europe/London)" or "Resets Sat 2:00 AM"). ccblocks parses that clock time - tolerant of the exact wording, which has changed between CLI versions - and schedules exactly one precise retry for a minute after it, instead of either polling blindly or waiting for the next regularly scheduled slot. The retry runs as a separate one-shot job (a transient `systemd-run --user` timer on Linux, a second self-cleaning LaunchAgent on macOS) so the regular schedule is untouched, and it never chains into further retries - if the retry itself fails, ccblocks falls back to waiting for the next scheduled trigger. If no reset time can be parsed from the message, ccblocks also falls back to the next scheduled trigger. If any trigger succeeds before a pending retry fires - the regular schedule or a manual `ccblocks trigger` got there first - the pending retry is cancelled so it doesn't fire needlessly.
+**If the trigger is rejected for hitting a usage limit:** ccblocks does not create a special job or parse reset times. It logs the failure and lets the regular 15-minute scheduler tick make the next attempt.
 
 ## Status & Monitoring
 
@@ -162,26 +129,14 @@ ccblocks trigger
 
 ## Configuration
 
-**Change schedule:**
-
-See [Schedules](#schedules) for available presets (247, work, night).
+**Scheduler control:**
 
 ```bash
-ccblocks schedule apply <name>             # Apply preset schedule
-ccblocks schedule apply custom             # Interactive custom schedule
-ccblocks schedule apply custom 0,8,16      # Custom with specified hours
+ccblocks schedule current   # Show scheduler status
+ccblocks schedule pause     # Disable scheduler
+ccblocks schedule resume    # Re-enable scheduler
+ccblocks schedule remove    # Remove scheduler files
 ```
-
-**Custom schedule examples:**
-- `0,8,16` → 15 hours/day coverage (midnight, 8 AM, 4 PM)
-- `9,15,21` → 15 hours/day coverage (9 AM, 3 PM, 9 PM)
-- `0,12` → 10 hours/day coverage (midnight, noon)
-- `0,6,12,18` → 20 hours/day coverage (optimal 4 triggers)
-
-**Validation rules:**
-- Minimum 2 triggers, maximum 4 triggers per day
-- Triggers must be ≥5 hours apart (Claude's block duration)
-- Hours in 24-hour format (0-23)
 
 **Vacation mode:**
 ```bash
@@ -189,7 +144,7 @@ ccblocks pause    # Disable all triggers
 ccblocks resume   # Re-enable schedule
 ```
 
-Your schedule is preserved when paused.
+The scheduler configuration remains available when paused.
 
 ## Troubleshooting
 

@@ -100,7 +100,7 @@ exit 0
 EOF
     chmod +x "${BIN_DIR}/schedule.sh"
 
-    run "$SCRIPT" schedule list
+    run "$SCRIPT" schedule current
     assert_success
     assert_output --partial "schedule-blocks was called"
 }

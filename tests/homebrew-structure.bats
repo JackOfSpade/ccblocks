@@ -112,7 +112,7 @@ simulate_homebrew_install() {
     export HOME="${TEST_TEMP_DIR}/home"
     mkdir -p "$HOME/Library/LaunchAgents"
 
-    run bash "${cellar_dir}/libexec/lib/launchagent-helper.sh" create 247
+    run bash "${cellar_dir}/libexec/lib/launchagent-helper.sh" create
     assert_success
 
     run cat "$HOME/Library/LaunchAgents/ccblocks.plist"

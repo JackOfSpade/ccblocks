@@ -28,7 +28,7 @@ show_usage() {
 	echo "  setup               # Install ccblocks (pings every 15 minutes)"
 	echo "  status              # Show current scheduler and trigger status"
 	echo "  trigger             # Manually trigger a new block now"
-	echo "  schedule <action>   # Manage scheduling (pause/resume/remove)"
+	echo "  schedule <action>   # Manage scheduling (current/pause/resume/remove)"
 	echo "  pause               # Temporarily disable ccblocks"
 	echo "  resume              # Re-enable paused schedule"
 	echo "  uninstall           # Remove ccblocks completely"

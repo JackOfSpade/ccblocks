@@ -111,8 +111,8 @@ show_usage() {
 	echo "Options:"
 	echo "  -h, --help    # Show this help message"
 	echo ""
-	echo "Runs the interactive installer: checks the Claude CLI, lets you choose"
-	echo "a schedule preset, and installs the LaunchAgent/systemd scheduler."
+	echo "Runs the interactive installer: checks the Claude CLI and installs"
+	echo "the LaunchAgent/systemd scheduler with 15-minute polling."
 }
 
 # Main setup flow

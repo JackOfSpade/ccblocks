@@ -299,7 +299,7 @@ EOF
 echo \"You've hit your session limit · resets 1:40am (Europe/London)\" >&2
 exit 1"
 
-    run bash -c "printf '1\nn\n' | '${PROJECT_ROOT}/libexec/bin/setup.sh'"
+    run bash -c "printf 'n\n' | '${PROJECT_ROOT}/libexec/bin/setup.sh'"
     assert_success
     assert_output --partial "Setup will continue"
     assert_output --partial "Setup cancelled"
@@ -314,7 +314,7 @@ exit 1"
     export CCBLOCKS_PROMPT="Write a detailed essay about block scheduling"
     mock_claude_success
 
-    run bash -c "printf '1\nn\n' | '${PROJECT_ROOT}/libexec/bin/setup.sh'"
+    run bash -c "printf 'n\n' | '${PROJECT_ROOT}/libexec/bin/setup.sh'"
     assert_success
     assert_output --partial "Setup cancelled"
 
@@ -334,12 +334,11 @@ exit 1"
     assert_output --partial "Usage:"
 }
 
-@test "schedule-blocks apply rejects invalid schedule name" {
+@test "schedule-blocks apply is no longer available" {
     run "${PROJECT_ROOT}/libexec/bin/schedule.sh" apply invalid-schedule-name
-    # Should fail with error or show available schedules
     assert_failure
-    # Should mention the invalid schedule or show help
-    assert_output --regexp "(invalid|Unknown|available|247|work|night)"
+    assert_output --partial "'ccblocks schedule apply' is no longer available."
+    assert_output --partial "polls every 15 minutes"
 }
 
 # Helper function to create mock helper for check-status tests. Copies

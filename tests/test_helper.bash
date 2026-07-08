@@ -25,11 +25,14 @@ PROJECT_ROOT="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
 PROJECT_RUNTIME_DIR="${PROJECT_ROOT}/libexec"
 PROJECT_BIN_DIR="${PROJECT_RUNTIME_DIR}/bin"
 PROJECT_LIB_DIR="${PROJECT_RUNTIME_DIR}/lib"
+TEST_ORIGINAL_PATH="$PATH"
 
 # Test-specific temporary directory
 setup_test_dir() {
     TEST_TEMP_DIR="$(mktemp -d)"
     export TEST_TEMP_DIR
+    unset MOCK_BIN_DIR
+    export PATH="$TEST_ORIGINAL_PATH"
 
     # Sandbox the config dir so no script under test can touch the
     # user's real ~/.config/ccblocks; tests may re-export their own
@@ -195,8 +198,13 @@ mock_ccusage_no_block() {
 
 # Mock ccusage not installed
 mock_ccusage_not_installed() {
-    # Don't create the mock - simulate command not found
-    :
+    # Simulate command not found even if the host has a real ccusage
+    # installed somewhere in the original PATH.
+    if [ -z "${MOCK_BIN_DIR}" ]; then
+        MOCK_BIN_DIR="${TEST_TEMP_DIR}/mock_bin"
+        mkdir -p "${MOCK_BIN_DIR}"
+    fi
+    export PATH="${MOCK_BIN_DIR}:/usr/bin:/bin"
 }
 
 # Mock ccusage with alternative format (e.g., time format variations)

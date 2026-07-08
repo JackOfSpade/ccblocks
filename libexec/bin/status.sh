@@ -21,8 +21,8 @@ case "${1:-}" in
 	echo ""
 	echo "Usage: ccblocks status"
 	echo ""
-	echo "Shows the current scheduler status (LaunchAgent/systemd), the custom"
-	echo "schedule details if configured, and recent trigger activity."
+	echo "Shows the current scheduler status (LaunchAgent/systemd) and recent"
+	echo "trigger activity."
 	exit 0
 	;;
 esac
@@ -59,6 +59,6 @@ else
 	echo "  View logs:       journalctl --user -t ccblocks -n 50"
 fi
 echo "  Trigger now:     ccblocks trigger"
-echo "  Change schedule: ccblocks schedule"
+echo "  Manage schedule: ccblocks schedule"
 echo "  Uninstall:       ccblocks uninstall"
 echo ""
