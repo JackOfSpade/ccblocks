@@ -1,19 +1,19 @@
-name: Auto-merge branches to master
+name: Auto-merge branches to main
 
-# Merges every branch in this repo into master automatically — but ONLY once that
+# Merges every branch in this repo into main automatically — but ONLY once that
 # branch's tip commit has a green run of the workflow named below (default: "CI").
-# A red/missing build never lands on master.
+# A red/missing build never lands on main.
 #
 # SETUP (per repo):
 #   1. Drop this file at .github/workflows/auto-merge-to-main.yml (filename is just
-#      a label — fine to keep even when master below is not literally "main")
+#      a label — fine to keep even when your default branch isn't literally "main")
 #   2. Drop scripts/auto_merge_decision.sh alongside it (this workflow sources it).
 #   3. Set CI_WORKFLOW_NAME / CI_WORKFLOW_FILE below to match your repo's CI
 #      workflow (the `name:` field and filename respectively). Defaults assume a
 #      workflow at .github/workflows/ci.yml with `name: CI`.
 #   4. Settings → Actions → General → Workflow permissions → "Read and write
 #      permissions". Without this the bot's push/PR-create calls fail.
-#   5. If `master` has branch protection requiring reviews/status checks, either
+#   5. If `main` has branch protection requiring reviews/status checks, either
 #      exempt this workflow's actor or this approach won't work as-is — a direct
 #      push will be rejected.
 #
@@ -37,7 +37,7 @@ permissions:
                                 # check reads workflow runs via the Actions API.
 
 concurrency:
-  group: auto-merge-master
+  group: auto-merge-main
   cancel-in-progress: false
 
 env:
@@ -49,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: master
+          ref: main
           fetch-depth: 0
 
       - name: Configure git
@@ -57,7 +57,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Merge all CI-green branches into master
+      - name: Merge all CI-green branches into main
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -66,7 +66,7 @@ jobs:
           source scripts/auto_merge_decision.sh
 
           # Drain EVERY un-merged branch, not just the one whose CI just finished.
-          # The concurrency group (auto-merge-master) keeps only ONE run pending, so
+          # The concurrency group (auto-merge-main) keeps only ONE run pending, so
           # rapid CI completions from several branches can drop a queued run
           # (GitHub keeps one pending per group). Processing all branches here means
           # whichever run does execute also picks up any stranded stragglers — a
@@ -76,16 +76,16 @@ jobs:
             exit 0
           fi
 
-          git checkout -B master origin/master
+          git checkout -B main origin/main
 
-          # Every remote branch is a candidate EXCEPT master itself (nothing to merge
-          # master into) and the origin/HEAD symbolic ref (not a real branch).
+          # Every remote branch is a candidate EXCEPT main itself (nothing to merge
+          # main into) and the origin/HEAD symbolic ref (not a real branch).
           merged_branches=""
-          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | grep -v -E '^origin/(master|HEAD)$' || true); do
+          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | grep -v -E '^origin/(main|HEAD)$' || true); do
             br="${ref#origin/}"
 
-            # Already contained in master (e.g. a prior run merged it): just clean up.
-            if is_ancestor_of "$ref" master; then
+            # Already contained in main (e.g. a prior run merged it): just clean up.
+            if is_ancestor_of "$ref" main; then
               merged_branches="$merged_branches $br"
               continue
             fi
@@ -108,7 +108,7 @@ jobs:
 
             # Fast-forward if possible, else a merge commit. A real conflict (not
             # auto-resolvable) falls back to opening a PR for manual resolution.
-            if git merge --ff-only "$ref" || git merge --no-ff "$ref" -m "Auto-merge $br into master"; then
+            if git merge --ff-only "$ref" || git merge --no-ff "$ref" -m "Auto-merge $br into main"; then
               merged_branches="$merged_branches $br"
             else
               git merge --abort || true
@@ -117,7 +117,7 @@ jobs:
                 exit 1
               fi
               echo "::warning::Unresolved conflict merging $br."
-              gh pr create --base master --head "$br" \
+              gh pr create --base main --head "$br" \
                 --title "Auto-merge conflict: $br" \
                 --body "The auto-merge workflow hit a conflict it could not resolve automatically. Resolve manually and merge, or close if superseded." \
                 || echo "PR already exists or could not be created."
@@ -129,17 +129,17 @@ jobs:
             exit 0
           fi
 
-          if ! git push origin master; then
-            echo "::warning::push to master failed; branches left intact for the next run."
+          if ! git push origin main; then
+            echo "::warning::push to main failed; branches left intact for the next run."
             exit 0
           fi
 
           # Delete each merged branch ONLY after re-confirming its current remote
-          # tip is fully contained in the new master, so a commit pushed during the
+          # tip is fully contained in the new main, so a commit pushed during the
           # merge window is never deleted unmerged — it's left for the next run.
           for br in $merged_branches; do
             git fetch origin "$br" >/dev/null 2>&1 || continue
-            if is_ancestor_of "origin/$br" master; then
+            if is_ancestor_of "origin/$br" main; then
               git push origin --delete "$br" || true
             else
               echo "::warning::$br advanced during the merge; not deleting (next run merges it)."

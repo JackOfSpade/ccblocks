@@ -273,7 +273,7 @@ print_warning "Warning message"
 
 **For maintainers only.**
 
-Releases are **automated via GitHub Actions** when the VERSION file is updated on the master branch.
+Releases are **automated via GitHub Actions** when the VERSION file is updated on the main branch.
 
 ### Creating a New Release
 
@@ -290,9 +290,9 @@ Releases are **automated via GitHub Actions** when the VERSION file is updated o
    git commit -m "chore: bump version to 1.0.1"
    ```
 
-3. **Push to master:**
+3. **Push to main:**
    ```bash
-   git push origin master
+   git push origin main
    ```
 
 4. **Automated steps (GitHub Actions):**
