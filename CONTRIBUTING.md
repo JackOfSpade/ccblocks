@@ -192,7 +192,7 @@ ccblocks/
 - **ccblocks** - Thin wrapper that execs `libexec/ccblocks` for local development
 - **libexec/ccblocks** - Main CLI dispatcher, routes commands to `libexec/bin/` scripts
 - **libexec/bin/setup.sh** - Handles initial installation and configuration
-- **libexec/bin/schedule.sh** - Manages the fixed 15-minute scheduler (current/pause/resume/remove)
+- **libexec/bin/schedule.sh** - Manages the fixed 10-minute scheduler (current/pause/resume/remove)
 - **libexec/bin/status.sh** - Status dashboard with schedule and activity
 - **libexec/bin/uninstall.sh** - Safe removal with config preservation options
 - **libexec/ccblocks-daemon.sh** - Verifies subscription auth and executes the Claude CLI Haiku trigger

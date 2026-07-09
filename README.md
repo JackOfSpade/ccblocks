@@ -32,14 +32,14 @@ Time-shift Claude sessions to match your working hours
 
 ## How Scheduling Works
 
-ccblocks runs a lightweight trigger every 15 minutes through the OS-native user scheduler:
+ccblocks runs a lightweight trigger every 10 minutes through the OS-native user scheduler:
 
-- **macOS**: LaunchAgent with `StartInterval=900`
-- **Linux**: systemd user timer with `OnUnitActiveSec=15min`
+- **macOS**: LaunchAgent with `StartInterval=600`
+- **Linux**: systemd user timer with `OnUnitActiveSec=10min`
 - **No schedule file to maintain**: pause/resume controls the scheduler
-- **Simple failure handling**: success or failure, the next attempt is just the next 15-minute scheduler tick
+- **Simple failure handling**: success or failure, the next attempt is just the next 10-minute scheduler tick
 
-Polling every 15 minutes keeps setup simple and avoids missing a new usage window because a fixed clock-time trigger happened while Claude was still rate-limited.
+Polling every 10 minutes keeps setup simple and avoids missing a new usage window because a fixed clock-time trigger happened while Claude was still rate-limited.
 
 ## Quick Start
 
@@ -83,7 +83,7 @@ No. ccblocks is designed for Claude subscription users. It refuses to trigger wh
 Each trigger sends a tiny one-turn prompt to Claude Code's cheapest model alias, `haiku`, and expects a short acknowledgement.
 
 **Can I change the timing?**
-No. ccblocks now uses fixed 15-minute polling. Use `ccblocks pause` and `ccblocks resume` to control when it runs.
+No. ccblocks now uses fixed 10-minute polling. Use `ccblocks pause` and `ccblocks resume` to control when it runs.
 
 **Why not just use cron or a bash loop?**
 
@@ -104,14 +104,14 @@ ccblocks provides:
 - **Linux**: systemd user service (`~/.config/systemd/user/ccblocks@.service`)
 
 **Trigger mechanism:**
-1. LaunchAgent/systemd timer fires every 15 minutes
+1. LaunchAgent/systemd timer fires every 10 minutes
 2. Executes `ccblocks-daemon` in your user session
 3. Confirms Claude subscription auth is active and API/provider credentials are not present
 4. Runs `claude -p --safe-mode --model haiku --max-turns 1 --tools "" --output-format text ...`
 5. New 5-hour block starts immediately
 6. Logs success/failure to system log
 
-**If the trigger is rejected for hitting a usage limit:** ccblocks does not create a special job or parse reset times. It logs the failure and lets the regular 15-minute scheduler tick make the next attempt.
+**If the trigger is rejected for hitting a usage limit:** ccblocks does not create a special job or parse reset times. It logs the failure and lets the regular 10-minute scheduler tick make the next attempt.
 
 ## Status & Monitoring
 

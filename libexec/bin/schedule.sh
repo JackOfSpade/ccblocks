@@ -53,7 +53,7 @@ show_help() {
 	echo "  resume    # Resume after pause"
 	echo "  remove    # Remove all ccblocks schedules"
 	echo ""
-	echo "Note: ccblocks now polls every 15 minutes. There is no schedule to"
+	echo "Note: ccblocks now polls every 10 minutes. There is no schedule to"
 	echo "configure — use 'pause' and 'resume' to control it entirely."
 	echo ""
 	echo "Examples:"
@@ -87,7 +87,7 @@ main() {
 	# Friendly error for removed commands
 	list | apply)
 		print_error "'ccblocks schedule $action' is no longer available."
-		echo "ccblocks now polls every 15 minutes — there is no schedule to configure."
+		echo "ccblocks now polls every 10 minutes — there is no schedule to configure."
 		echo "Use 'ccblocks schedule pause/resume' to control it."
 		return 1
 		;;

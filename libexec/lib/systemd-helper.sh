@@ -45,7 +45,7 @@ EOF
 }
 
 # Write the systemd timer unit file using a fixed repeating interval.
-# There is no schedule to configure - the timer fires every 15 minutes
+# There is no schedule to configure - the timer fires every 10 minutes
 # after activation.
 write_timer_file() {
 	cat >"$TIMER_FILE" <<EOF
@@ -53,13 +53,13 @@ write_timer_file() {
 Description=ccblocks Scheduling Timer (%i)
 
 [Timer]
-OnBootSec=15min
-OnUnitActiveSec=15min
+OnBootSec=10min
+OnUnitActiveSec=10min
 Persistent=true
 EOF
 }
 
-# Create systemd service and timer files (always 15-minute polling)
+# Create systemd service and timer files (always 10-minute polling)
 create_service() {
 	write_service_file
 	write_timer_file
@@ -126,7 +126,7 @@ status_service() {
 
 		# Show schedule
 		echo "Schedule:"
-		echo "  Every 15 minutes"
+		echo "  Every 10 minutes"
 		echo ""
 
 		# Show next trigger
@@ -172,7 +172,7 @@ show_usage() {
 	echo "Note: This is an internal helper. Use 'ccblocks' command instead."
 	echo ""
 	echo "Commands:"
-	echo "  create             - Create systemd service/timer (fires every 15 minutes)"
+	echo "  create             - Create systemd service/timer (fires every 10 minutes)"
 	echo "  enable             - Enable and start timer"
 	echo "  disable            - Disable and stop timer"
 	echo "  reload             - Reload systemd (after manual edits)"
@@ -182,7 +182,7 @@ show_usage() {
 	echo "  logs               - Show recent logs"
 	echo ""
 	echo "Examples:"
-	echo "  $0 create          # Create with 15-minute polling"
+	echo "  $0 create          # Create with 10-minute polling"
 	echo "  $0 enable          # Enable the timer"
 	echo "  $0 status          # Check status"
 	echo "  $0 start           # Trigger immediately"

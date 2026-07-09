@@ -76,7 +76,7 @@ write_plist() {
     <string>$HOME/Library/Logs/ccblocks.log</string>
 
     <key>StartInterval</key>
-    <integer>900</integer>
+    <integer>600</integer>
 
     <key>RunAtLoad</key>
     <false/>
@@ -85,7 +85,7 @@ write_plist() {
 EOF
 }
 
-# Create LaunchAgent plist (always 15-minute polling)
+# Create LaunchAgent plist (always 10-minute polling)
 create_plist() {
 	write_plist
 	print_status "Created LaunchAgent plist at: $PLIST_PATH"
@@ -162,7 +162,7 @@ status_agent() {
 
 		# Show schedule
 		echo "Schedule:"
-		echo "  Every 15 minutes"
+		echo "  Every 10 minutes"
 		echo ""
 
 		# Show recent activity from state file
@@ -202,7 +202,7 @@ show_usage() {
 	echo "Note: This is an internal helper. Use 'ccblocks' command instead."
 	echo ""
 	echo "Commands:"
-	echo "  create             - Create LaunchAgent plist (fires every 15 minutes)"
+	echo "  create             - Create LaunchAgent plist (fires every 10 minutes)"
 	echo "  load               - Load LaunchAgent"
 	echo "  unload             - Unload LaunchAgent"
 	echo "  reload             - Reload LaunchAgent (unload + load)"
@@ -212,7 +212,7 @@ show_usage() {
 	echo "  logs               - Show recent logs"
 	echo ""
 	echo "Examples:"
-	echo "  $0 create          # Create plist (15-minute polling)"
+	echo "  $0 create          # Create plist (10-minute polling)"
 	echo "  $0 load            # Load the LaunchAgent"
 	echo "  $0 status          # Check status"
 	echo "  $0 start           # Trigger immediately"
