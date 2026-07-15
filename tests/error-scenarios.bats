@@ -338,7 +338,7 @@ exit 1"
     run "${PROJECT_ROOT}/libexec/bin/schedule.sh" apply invalid-schedule-name
     assert_failure
     assert_output --partial "'ccblocks schedule apply' is no longer available."
-    assert_output --partial "polls every 10 minutes"
+    assert_output --partial "polls every 5 minutes"
 }
 
 # Helper function to create mock helper for check-status tests. Copies

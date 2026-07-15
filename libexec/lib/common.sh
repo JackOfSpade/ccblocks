@@ -15,6 +15,13 @@ NC='\033[0m' # No Colour
 : "${CCBLOCKS_INSTALL:=${SCRIPT_DIR:-$(pwd)}}"
 : "${CCBLOCKS_CONFIG:=${HOME}/.config/ccblocks}"
 
+# Fixed polling interval for the LaunchAgent/systemd scheduler. Single
+# source of truth: the plist/timer writers and all help/status text
+# derive from this instead of each hardcoding the value separately.
+: "${CCBLOCKS_INTERVAL_SECONDS:=300}"
+CCBLOCKS_INTERVAL_MINUTES=$((CCBLOCKS_INTERVAL_SECONDS / 60))
+export CCBLOCKS_INTERVAL_SECONDS CCBLOCKS_INTERVAL_MINUTES
+
 # No PATH bootstrap: we rely on the launcher to pass PATH through.
 
 # Utility helpers

@@ -46,6 +46,15 @@ agent_loaded() {
 	launchctl print "gui/$uid/$LABEL" >/dev/null 2>&1
 }
 
+# Read the StartInterval currently written into the installed plist.
+# Prints nothing if the plist is missing or the key can't be parsed - this
+# can differ from CCBLOCKS_INTERVAL_SECONDS when the plist predates a
+# version that changed the interval and 'ccblocks setup' hasn't re-run yet.
+installed_interval_seconds() {
+	agent_exists || return 1
+	sed -n '/<key>StartInterval<\/key>/{n;s/[^0-9]//g;p;}' "$PLIST_PATH"
+}
+
 # Write the LaunchAgent plist using a fixed StartInterval (fires every N
 # seconds regardless of clock time). This replaces the old clock-calendar
 # approach, which required guessing clock times and missed windows when a
@@ -76,7 +85,7 @@ write_plist() {
     <string>$HOME/Library/Logs/ccblocks.log</string>
 
     <key>StartInterval</key>
-    <integer>600</integer>
+    <integer>$CCBLOCKS_INTERVAL_SECONDS</integer>
 
     <key>RunAtLoad</key>
     <false/>
@@ -85,7 +94,8 @@ write_plist() {
 EOF
 }
 
-# Create LaunchAgent plist (always 10-minute polling)
+# Create LaunchAgent plist (fixed-interval polling; see
+# CCBLOCKS_INTERVAL_SECONDS in common.sh)
 create_plist() {
 	write_plist
 	print_status "Created LaunchAgent plist at: $PLIST_PATH"
@@ -160,9 +170,22 @@ status_agent() {
 		echo "Status: ✅ Loaded and active"
 		echo ""
 
-		# Show schedule
+		# Show schedule - read the interval actually written into the
+		# installed plist rather than assuming it matches this script
+		# version's default, since an upgrade doesn't rewrite an
+		# already-installed plist until 'ccblocks setup' is re-run.
 		echo "Schedule:"
-		echo "  Every 10 minutes"
+		local installed_seconds
+		installed_seconds="$(installed_interval_seconds)"
+		if [ -n "$installed_seconds" ]; then
+			echo "  Every $((installed_seconds / 60)) minutes"
+			if [ "$installed_seconds" -ne "$CCBLOCKS_INTERVAL_SECONDS" ]; then
+				echo ""
+				print_warning "Installed schedule differs from this version's default (${CCBLOCKS_INTERVAL_MINUTES} min). Run 'ccblocks setup' again to apply it."
+			fi
+		else
+			echo "  Unknown (could not read StartInterval from plist)"
+		fi
 		echo ""
 
 		# Show recent activity from state file
@@ -202,7 +225,7 @@ show_usage() {
 	echo "Note: This is an internal helper. Use 'ccblocks' command instead."
 	echo ""
 	echo "Commands:"
-	echo "  create             - Create LaunchAgent plist (fires every 10 minutes)"
+	echo "  create             - Create LaunchAgent plist (fires every ${CCBLOCKS_INTERVAL_MINUTES} minutes)"
 	echo "  load               - Load LaunchAgent"
 	echo "  unload             - Unload LaunchAgent"
 	echo "  reload             - Reload LaunchAgent (unload + load)"
@@ -212,7 +235,7 @@ show_usage() {
 	echo "  logs               - Show recent logs"
 	echo ""
 	echo "Examples:"
-	echo "  $0 create          # Create plist (10-minute polling)"
+	echo "  $0 create          # Create plist (${CCBLOCKS_INTERVAL_MINUTES}-minute polling)"
 	echo "  $0 load            # Load the LaunchAgent"
 	echo "  $0 status          # Check status"
 	echo "  $0 start           # Trigger immediately"

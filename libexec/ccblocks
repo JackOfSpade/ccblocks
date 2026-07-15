@@ -25,7 +25,7 @@ show_usage() {
 	echo "Usage: ccblocks <command> [options]"
 	echo ""
 	echo "Commands:"
-	echo "  setup               # Install ccblocks (pings every 10 minutes)"
+	echo "  setup               # Install ccblocks (pings every ${CCBLOCKS_INTERVAL_MINUTES} minutes)"
 	echo "  status              # Show current scheduler and trigger status"
 	echo "  trigger             # Manually trigger a new block now"
 	echo "  schedule <action>   # Manage scheduling (current/pause/resume/remove)"

@@ -26,6 +26,16 @@ service_exists() {
 	[ -f "$SERVICE_FILE" ]
 }
 
+# Read the OnUnitActiveSec value currently written into the installed
+# timer unit (e.g. "5" from "OnUnitActiveSec=5min"). Prints nothing if the
+# timer file is missing or the key can't be parsed - this can differ from
+# CCBLOCKS_INTERVAL_MINUTES when the timer predates a version that changed
+# the interval and 'ccblocks setup' hasn't re-run yet.
+installed_interval_minutes() {
+	service_exists || return 1
+	sed -n 's/^OnUnitActiveSec=\([0-9][0-9]*\)min$/\1/p' "$TIMER_FILE"
+}
+
 # Write the systemd service unit file.
 write_service_file() {
 	# Create systemd user directory if it doesn't exist
@@ -45,21 +55,22 @@ EOF
 }
 
 # Write the systemd timer unit file using a fixed repeating interval.
-# There is no schedule to configure - the timer fires every 10 minutes
-# after activation.
+# There is no schedule to configure - the timer fires at a fixed interval
+# (CCBLOCKS_INTERVAL_MINUTES) after activation.
 write_timer_file() {
 	cat >"$TIMER_FILE" <<EOF
 [Unit]
 Description=ccblocks Scheduling Timer (%i)
 
 [Timer]
-OnBootSec=10min
-OnUnitActiveSec=10min
+OnBootSec=${CCBLOCKS_INTERVAL_MINUTES}min
+OnUnitActiveSec=${CCBLOCKS_INTERVAL_MINUTES}min
 Persistent=true
 EOF
 }
 
-# Create systemd service and timer files (always 10-minute polling)
+# Create systemd service and timer files (fixed-interval polling; see
+# CCBLOCKS_INTERVAL_SECONDS in common.sh)
 create_service() {
 	write_service_file
 	write_timer_file
@@ -124,9 +135,22 @@ status_service() {
 		echo "Status: ✅ Timer active"
 		echo ""
 
-		# Show schedule
+		# Show schedule - read the interval actually written into the
+		# installed timer unit rather than assuming it matches this
+		# script version's default, since an upgrade doesn't rewrite an
+		# already-installed timer until 'ccblocks setup' is re-run.
 		echo "Schedule:"
-		echo "  Every 10 minutes"
+		local installed_minutes
+		installed_minutes="$(installed_interval_minutes)"
+		if [ -n "$installed_minutes" ]; then
+			echo "  Every $installed_minutes minutes"
+			if [ "$installed_minutes" -ne "$CCBLOCKS_INTERVAL_MINUTES" ]; then
+				echo ""
+				print_warning "Installed schedule differs from this version's default (${CCBLOCKS_INTERVAL_MINUTES} min). Run 'ccblocks setup' again to apply it."
+			fi
+		else
+			echo "  Unknown (could not read OnUnitActiveSec from timer unit)"
+		fi
 		echo ""
 
 		# Show next trigger
@@ -172,7 +196,7 @@ show_usage() {
 	echo "Note: This is an internal helper. Use 'ccblocks' command instead."
 	echo ""
 	echo "Commands:"
-	echo "  create             - Create systemd service/timer (fires every 10 minutes)"
+	echo "  create             - Create systemd service/timer (fires every ${CCBLOCKS_INTERVAL_MINUTES} minutes)"
 	echo "  enable             - Enable and start timer"
 	echo "  disable            - Disable and stop timer"
 	echo "  reload             - Reload systemd (after manual edits)"
@@ -182,7 +206,7 @@ show_usage() {
 	echo "  logs               - Show recent logs"
 	echo ""
 	echo "Examples:"
-	echo "  $0 create          # Create with 10-minute polling"
+	echo "  $0 create          # Create with ${CCBLOCKS_INTERVAL_MINUTES}-minute polling"
 	echo "  $0 enable          # Enable the timer"
 	echo "  $0 status          # Check status"
 	echo "  $0 start           # Trigger immediately"
@@ -212,10 +236,13 @@ main() {
 		systemctl --user daemon-reload
 		print_status "Systemd user daemon reloaded"
 
-		# Restart timer if it's enabled to apply changes
+		# Restart an already-enabled timer to apply changes (e.g. a new
+		# interval); enable it if this is a fresh install instead.
 		if systemctl --user is-enabled "${SERVICE_NAME}@default.timer" &>/dev/null; then
 			systemctl --user restart "${SERVICE_NAME}@default.timer"
 			print_status "Timer restarted with new schedule"
+		else
+			enable_timer
 		fi
 		;;
 	start)

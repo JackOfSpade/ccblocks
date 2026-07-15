@@ -38,7 +38,7 @@ source "$SCRIPT_DIR/common.sh"
 
 case "$1" in
     status)
-        echo "Mock: fixed 10-minute scheduler active"
+        echo "Mock: fixed 5-minute scheduler active"
         exit 0
         ;;
     load)
@@ -75,7 +75,7 @@ EOF
 @test "schedule-blocks shows current status" {
     run "$SCRIPT" current
     assert_success
-    assert_output --partial "Mock: fixed 10-minute scheduler active"
+    assert_output --partial "Mock: fixed 5-minute scheduler active"
 }
 
 @test "schedule-blocks pause unloads scheduler" {
@@ -103,7 +103,7 @@ EOF
     run "$SCRIPT" list
     assert_failure
     assert_output --partial "'ccblocks schedule list' is no longer available."
-    assert_output --partial "polls every 10 minutes"
+    assert_output --partial "polls every 5 minutes"
 }
 
 @test "schedule-blocks rejects removed apply command" {

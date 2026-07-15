@@ -75,9 +75,12 @@ install_scheduler() {
 		exit 1
 	fi
 
-	# Load/enable scheduler (LOAD_CMD is set by init_os_vars in common.sh)
-	if ! "$HELPER" "$LOAD_CMD"; then
-		print_error "Failed to ${LOAD_CMD} $SCHEDULER_NAME"
+	# Reload rather than load/enable: on an already-installed machine the
+	# scheduler may already be loaded, in which case a plain load/enable
+	# is a no-op and would leave the old interval live even though the
+	# plist/timer file was just rewritten above.
+	if ! "$HELPER" reload; then
+		print_error "Failed to reload $SCHEDULER_NAME"
 		exit 1
 	fi
 
@@ -89,10 +92,10 @@ show_completion() {
 	echo ""
 	print_header "[CCBLOCKS] Setup Complete! 🚀"
 	echo ""
-	print_status "Schedule: every 10 minutes"
+	print_status "Schedule: every ${CCBLOCKS_INTERVAL_MINUTES} minutes"
 	print_status "Scheduler: $SCHEDULER_NAME"
 	echo ""
-	echo "Your Claude blocks will now be triggered automatically every 10 minutes!"
+	echo "Your Claude blocks will now be triggered automatically every ${CCBLOCKS_INTERVAL_MINUTES} minutes!"
 	echo "The $SCHEDULER_NAME runs in your user session with full authentication."
 	echo ""
 	echo "Next Steps:"
@@ -112,7 +115,7 @@ show_usage() {
 	echo "  -h, --help    # Show this help message"
 	echo ""
 	echo "Runs the interactive installer: checks the Claude CLI and installs"
-	echo "the LaunchAgent/systemd scheduler with 10-minute polling."
+	echo "the LaunchAgent/systemd scheduler with ${CCBLOCKS_INTERVAL_MINUTES}-minute polling."
 }
 
 # Main setup flow
@@ -134,7 +137,7 @@ main() {
 
 	# Confirm before proceeding
 	echo ""
-	print_warning "Ready to install ccblocks (triggers every 10 minutes)"
+	print_warning "Ready to install ccblocks (triggers every ${CCBLOCKS_INTERVAL_MINUTES} minutes)"
 	read -r -p "Proceed with installation? [Y/n]: " confirm
 
 	# Default to yes if empty, or if user explicitly said no
