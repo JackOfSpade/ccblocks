@@ -100,7 +100,7 @@ if [ $rc -eq 0 ]; then
 	if command_exists ccusage; then
 		# Give Claude a brief moment to update backend state
 		sleep 1
-		usage_out="$(ccusage 2>/dev/null || true)"
+		usage_out="$(ccusage blocks --active 2>/dev/null || true)"
 
 		# Trim whitespace for more robust matching
 		usage_out_trimmed="$(echo "$usage_out" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
