@@ -16,3 +16,6 @@ GEMINI.md
 # Logs and temporary files
 *.log
 .DS_Store
+
+# local CI secrets for act (global pre-push hook) - never commit
+.secrets
