@@ -17,6 +17,25 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      # act-local-CI only. GitHub's ubuntu-latest ships shellcheck preinstalled;
+      # act's runner image (catthehacker/ubuntu:act-latest) does not, so this job
+      # died with exit 127 under the global `act push` pre-push hook — blocking
+      # every push for a reason unrelated to the code. `env.ACT` is set only by
+      # act and is unset on GitHub-hosted runners, so this is skipped there and
+      # cannot change real CI. `== 'true'` rather than a bare truthiness test,
+      # because GitHub treats ANY non-empty string (including "false") as true;
+      # the in-script re-check is a second guard so a misfiring `if:` degrades to
+      # a no-op instead of failing the job on a transient apt error.
+      - name: Install shellcheck (act-local CI only — GitHub's runner already has it)
+        if: ${{ env.ACT == 'true' }}
+        run: |
+          set -euo pipefail
+          [ "${ACT:-}" = "true" ] || exit 0
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          fi
+
       - name: Run shellcheck
         run: |
           shellcheck --version

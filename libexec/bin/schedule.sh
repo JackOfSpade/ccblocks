@@ -19,7 +19,6 @@ install_err_trap "Common fixes: ensure the scheduler helper and its config direc
 detect_os || exit 1
 init_os_vars "$SCRIPT_DIR/.." || exit 1
 
-
 # Pause scheduling
 pause_schedule() {
 	"$HELPER" unload

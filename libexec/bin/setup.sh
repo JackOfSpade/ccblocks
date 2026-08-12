@@ -63,7 +63,6 @@ check_current_block() {
 	echo ""
 }
 
-
 # Install scheduler (LaunchAgent or systemd)
 install_scheduler() {
 	# shellcheck disable=SC2153  # SCHEDULER_NAME is set by detect_os() in common.sh

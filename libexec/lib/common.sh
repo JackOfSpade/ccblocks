@@ -147,7 +147,6 @@ detect_os() {
 	fi
 }
 
-
 # Logging helpers
 log_to_system() {
 	local message="$1"
@@ -322,7 +321,6 @@ init_os_vars() {
 
 	return 0
 }
-
 
 # Export functions so they can be used in subshells if needed
 export -f print_status print_error print_warning print_header show_logo run_with_timeout log_to_system command_exists
