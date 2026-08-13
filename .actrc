@@ -3,7 +3,9 @@
 # nonexistent arm64 Node toolcache path for later JavaScript action steps.
 --env PATH=/opt/acttoolcache/node/24.19.0/x64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
 
-# Intentionally do not map macos-latest to -self-hosted. That matrix row runs
-# `make install-deps`, which performs Homebrew tap/install mutations; retaining
-# act's explicit unsupported-platform skip avoids making every pre-push mutate
-# this development Mac. Hosted CI remains the authoritative macOS coverage.
+# Local act must exercise only the Linux row. `act` may otherwise execute a
+# dynamic `macos-latest` matrix row in its default Linux image, falsely passing
+# macOS coverage. Do not map macos-latest to -self-hosted: that row performs
+# Homebrew mutations. GitHub Actions still receives the unmodified workflow
+# matrix and runs both ubuntu-latest and macos-latest.
+--matrix os:ubuntu-latest
