@@ -1,0 +1,9 @@
+# Local `act` compatibility only: an add-path command (the Linux job adds
+# Homebrew to GITHUB_PATH) can make amd64 containers on Apple Silicon use a
+# nonexistent arm64 Node toolcache path for later JavaScript action steps.
+--env PATH=/opt/acttoolcache/node/24.19.0/x64/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+
+# Intentionally do not map macos-latest to -self-hosted. That matrix row runs
+# `make install-deps`, which performs Homebrew tap/install mutations; retaining
+# act's explicit unsupported-platform skip avoids making every pre-push mutate
+# this development Mac. Hosted CI remains the authoritative macOS coverage.
