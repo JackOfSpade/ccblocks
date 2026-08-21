@@ -5,9 +5,17 @@
 
 set -euo pipefail
 
-# Get the directory where ccblocks is installed (resolve symlinks)
+# Get the directory where ccblocks is installed (resolve symlinks).
+# readlink follows one hop and cannot detect a cycle, so bound the walk:
+# a symlink loop would otherwise spin here forever.
 SOURCE="${BASH_SOURCE[0]}"
+hops=0
 while [ -L "$SOURCE" ]; do
+	hops=$((hops + 1))
+	if [ "$hops" -gt 40 ]; then
+		echo "Error: too many symlink levels resolving ${BASH_SOURCE[0]} (symlink loop?)" >&2
+		exit 1
+	fi
 	DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 	SOURCE="$(readlink "$SOURCE")"
 	[[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
@@ -53,6 +61,35 @@ show_usage() {
 	echo "  ccblocks schedule --help"
 }
 
+# Resolve the version string. Homebrew rewrites the sentinel below at
+# install time; building it by concatenation keeps a global sentinel
+# substitution from also rewriting the comparisons and defeating the
+# development fallbacks.
+resolve_version() {
+	local sentinel version candidate
+	sentinel='__VER''SION__'
+	version="__VERSION__"
+
+	if [ "$version" != "$sentinel" ]; then
+		printf '%s\n' "$version"
+		return 0
+	fi
+
+	# Fallback to VERSION file for development/non-Homebrew installations
+	for candidate in "$SCRIPT_DIR/VERSION" "$SCRIPT_DIR/../VERSION"; do
+		if [ -f "$candidate" ]; then
+			version=$(tr -d '\n\r' <"$candidate")
+			# An empty or whitespace-only file tells us nothing
+			if [ -n "${version//[[:space:]]/}" ]; then
+				printf '%s\n' "$version"
+				return 0
+			fi
+		fi
+	done
+
+	printf '%s\n' "unknown"
+}
+
 # Main command dispatcher
 main() {
 	case "${1:-help}" in
@@ -82,20 +119,11 @@ main() {
 		shift
 		exec "$SCRIPT_DIR/bin/uninstall.sh" "$@"
 		;;
-	"help" | "-h" | "--help" | "")
+	"help" | "-h" | "--help")
 		show_usage
 		;;
 	"--version" | "-v")
-		# Version injected by Homebrew during installation
-		VERSION="__VERSION__"
-		# Fallback to VERSION file for development/non-Homebrew installations
-		if [ "$VERSION" = "__VERSION__" ] && [ -f "$SCRIPT_DIR/VERSION" ]; then
-			VERSION=$(tr -d '\n\r' <"$SCRIPT_DIR/VERSION")
-		elif [ "$VERSION" = "__VERSION__" ] && [ -f "$SCRIPT_DIR/../VERSION" ]; then
-			VERSION=$(tr -d '\n\r' <"$SCRIPT_DIR/../VERSION")
-		elif [ "$VERSION" = "__VERSION__" ]; then
-			VERSION="unknown"
-		fi
+		VERSION="$(resolve_version)"
 		echo "ccblocks $VERSION"
 		;;
 	*)

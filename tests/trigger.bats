@@ -116,10 +116,23 @@ teardown() {
     run "$SCRIPT"
     assert_success
     run cat "$args_file"
-    assert_output --partial "-p --safe-mode --model haiku"
-    assert_output --partial "--max-turns 1"
-    assert_output --partial "--output-format text"
-    assert_output --partial "Reply exactly: OK"
+    assert_line '<-p>'
+    assert_line '<--safe-mode>'
+    assert_line '<--model>'
+    assert_line '<haiku>'
+    assert_line '<--max-turns>'
+    assert_line '<1>'
+    assert_line '<--tools>'
+    assert_line '<>'
+    assert_line '<--output-format>'
+    assert_line '<text>'
+    assert_line '<Reply exactly: OK>'
+
+    # Per-line assertions cannot see adjacency: swapping the model for
+    # `--model opus --fallback-model haiku` would still satisfy every line
+    # above. Collapse the log and pin the flag to its own value.
+    run bash -c "tr -d '\n' < '$args_file'"
+    assert_output --partial '<--model><haiku>'
 }
 
 @test "ccblocks-daemon runs auth status through timeout wrapper" {
@@ -148,15 +161,19 @@ shift
     run "$SCRIPT"
     assert_success
     run cat "$args_file"
-    assert_output --partial "--model haiku"
-    assert_output --partial "Reply exactly: OK"
-    refute_output --partial "--model sonnet"
+    assert_line '<--model>'
+    assert_line '<haiku>'
+    assert_line '<Reply exactly: OK>'
+    refute_line '<sonnet>'
     refute_output --partial "detailed essay"
 }
 
-# Activity file tests
+# Activity file tests. Verification now gates the .last-activity write, so
+# these mock ccusage rather than depending on whatever a host-installed
+# ccusage reports about the developer's real blocks.
 @test "ccblocks-daemon creates .last-activity file on success" {
     mock_claude_success
+    mock_ccusage_active_block
 
     run "$SCRIPT"
     assert_success
@@ -165,6 +182,7 @@ shift
 
 @test "ccblocks-daemon writes timestamp to .last-activity file" {
     mock_claude_success
+    mock_ccusage_active_block
 
     run "$SCRIPT"
     assert_success
@@ -176,6 +194,7 @@ shift
 
 @test "ccblocks-daemon overwrites existing .last-activity file" {
     mock_claude_success
+    mock_ccusage_active_block
 
     # Create existing activity file
     echo "2024-01-01 00:00:00" > "$CCBLOCKS_CONFIG/.last-activity"
@@ -228,6 +247,10 @@ shift
 # Edge cases
 @test "ccblocks-daemon doesn't fail if .last-activity write fails" {
     mock_claude_success
+    # An active block is what makes the daemon reach the guarded
+    # .last-activity write at all; without this mock the host's real ccusage
+    # could short-circuit before it and the test would pass vacuously.
+    mock_ccusage_active_block
 
     # Make config directory read-only to prevent file creation
     chmod 555 "$CCBLOCKS_CONFIG"
@@ -255,8 +278,21 @@ shift
     mock_ccusage_no_block
 
     run "$SCRIPT"
-    # Should still succeed by default (non-strict mode)
+    # Should still succeed by default (non-strict mode), but must not
+    # claim a trigger that ccusage says did not take effect.
     assert_success
+    assert_output --partial "ccusage reports no active block"
+    assert [ ! -f "$CCBLOCKS_CONFIG/.last-activity" ]
+}
+
+@test "ccblocks-daemon fails when ccusage shows no active block under CCBLOCKS_STRICT_VERIFY" {
+    mock_claude_success
+    mock_ccusage_no_block
+
+    export CCBLOCKS_STRICT_VERIFY=1
+    run "$SCRIPT"
+    assert_failure
+    assert_output --partial "ccusage reports no active block"
 }
 
 @test "ccblocks-daemon handles alternative ccusage output formats" {
@@ -383,4 +419,21 @@ exit 0'
     run "$SCRIPT"
     assert_success
     assert_output --partial "this stdout text should appear in debug mode"
+}
+
+# bin/trigger.sh (the `ccblocks trigger` front end, which execs the daemon)
+@test "trigger.sh shows help with --help instead of triggering" {
+    run "${PROJECT_ROOT}/libexec/bin/trigger.sh" --help
+    assert_success
+    assert_output --partial "Usage: ccblocks trigger"
+    assert_output --partial "scheduled runs execute"
+}
+
+@test "trigger.sh runs the daemon and succeeds" {
+    mock_claude_success
+    mock_ccusage_active_block
+
+    run "${PROJECT_ROOT}/libexec/bin/trigger.sh"
+    assert_success
+    assert [ -f "$CCBLOCKS_CONFIG/.last-activity" ]
 }

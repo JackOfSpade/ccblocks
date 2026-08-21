@@ -7,6 +7,11 @@ load test_helper
 setup() {
     setup_test_dir
 
+    # Sandbox HOME so init_os_vars' CONFIG_PATH points inside the test
+    # directory instead of the developer's real LaunchAgent/systemd units.
+    export HOME="${TEST_TEMP_DIR}/home"
+    mkdir -p "$HOME"
+
     MOCK_LIBEXEC="${TEST_TEMP_DIR}/libexec"
     cp -r "${PROJECT_ROOT}/libexec" "$MOCK_LIBEXEC"
     SCRIPT="${MOCK_LIBEXEC}/bin/schedule.sh"

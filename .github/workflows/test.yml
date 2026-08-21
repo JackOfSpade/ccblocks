@@ -1,11 +1,18 @@
 name: Test
 run-name: Test
 
+# Every branch is built on push, not just main: the auto-merge drain gates each
+# branch on a green Test run for that branch's exact tip, and a branch with no
+# open PR would otherwise never get a run at all — so it could never merge.
+# pull_request still covers forks, whose pushes land in the fork, not here.
+# workflow_dispatch lets auto-merge-to-main.yml request a run on main after it
+# pushes (a GITHUB_TOKEN push triggers no workflows of its own).
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -84,5 +91,12 @@ jobs:
       - name: Run tests
         run: make test
 
-      - name: Check test coverage
+      # Informational only. coverage.sh runs under `set -euo pipefail`, so it
+      # could abort on e.g. a file that moved; continue-on-error makes "this
+      # never fails the job" an enforced property rather than an assumption
+      # about the script. One matrix row is enough; the report is
+      # platform-independent.
+      - name: Print coverage report
+        if: runner.os == 'Linux'
+        continue-on-error: true
         run: bash dev/coverage.sh

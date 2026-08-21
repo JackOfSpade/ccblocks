@@ -28,11 +28,25 @@ teardown() {
 }
 
 @test "workflow actions are pinned to commit SHAs" {
-	run grep -RhoE 'uses:[[:space:]]+[^[:space:]]+@[A-Za-z0-9._/-]+' "${PROJECT_ROOT}/.github/workflows"
+	# Match on `uses:` alone, not on `uses: ...@...`: a reference with no `@` at
+	# all (implicitly the action's default branch) is the most mutable form
+	# there is, and an @-anchored pattern would skip it entirely.
+	run grep -RhoE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]+[^[:space:]]+' "${PROJECT_ROOT}/.github/workflows"
 	assert_success
 
 	while IFS= read -r uses_line; do
-		ref="${uses_line##*@}"
+		spec="${uses_line##* }"
+
+		# Local composite actions live in this repo and move with it.
+		case "$spec" in
+		./*) continue ;;
+		esac
+
+		ref="${spec##*@}"
+		if [ "$ref" = "$spec" ]; then
+			echo "Unpinned action (no @ref at all): $uses_line"
+			return 1
+		fi
 		[[ "$ref" =~ ^[0-9a-f]{40}$ ]] || {
 			echo "Mutable action ref: $uses_line"
 			return 1
@@ -48,19 +62,30 @@ teardown() {
 	assert_success
 }
 
-@test "publish workflow only runs for successful push-triggered test runs" {
+@test "publish workflow only runs for successful push or dispatched test runs" {
 	run grep -F "github.event.workflow_run.conclusion == 'success'" "$PUBLISH_WORKFLOW"
 	assert_success
 
-	run grep -F "github.event.workflow_run.event == 'push'" "$PUBLISH_WORKFLOW"
+	# The parentheses are the assertion, not decoration: `&&` binds tighter
+	# than `||`, so dropping them turns the condition into
+	# `(success && push) || workflow_dispatch` and ANY dispatched run
+	# publishes, green or not. Match the parenthesised group itself.
+	run grep -F "(github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')" "$PUBLISH_WORKFLOW"
 	assert_success
 }
 
 @test "publish workflow checks out the tested commit in privileged jobs" {
-	run grep -F 'ref: ${{ github.event.workflow_run.head_sha }}' "$PUBLISH_WORKFLOW"
+	# Order-independent: every checkout in this workflow must pin the tested
+	# SHA, so the two counts have to agree no matter where the steps sit.
+	run grep -cE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]+actions/checkout@' "$PUBLISH_WORKFLOW"
 	assert_success
-	assert_line --index 0 --partial 'ref: ${{ github.event.workflow_run.head_sha }}'
-	assert_line --index 1 --partial 'ref: ${{ github.event.workflow_run.head_sha }}'
+	checkout_count="$output"
+
+	run grep -cF 'ref: ${{ github.event.workflow_run.head_sha }}' "$PUBLISH_WORKFLOW"
+	assert_success
+	assert_output "$checkout_count"
+
+	[ "$checkout_count" -ge 2 ]
 }
 
 @test "publish workflow releases only when the version tag is missing" {
@@ -76,21 +101,50 @@ teardown() {
 	assert_success
 }
 
-@test "publish workflow does not inline version outputs inside shell scripts" {
-	run grep -nE 'run:[[:space:]]*\||run:[[:space:]]*$' "$PUBLISH_WORKFLOW"
+@test "publish workflow does not inline template expressions inside run blocks" {
+	# Sanity check: the scan below is only meaningful while the workflow still
+	# has block-scalar run steps to walk.
+	run grep -Eq '^[[:space:]]*run:[[:space:]]*[|>]' "$PUBLISH_WORKFLOW"
 	assert_success
 
-	run grep -nF '${{ needs.validate.outputs.version }}' "$PUBLISH_WORKFLOW"
-	assert_success
+	# Track the run block itself rather than peeking a fixed number of lines
+	# back: a `${{ }}` far enough down a long run block would otherwise slip
+	# past unnoticed. A block starts at `run: |` / `run: >` and ends as soon as
+	# indentation returns to the step's own level.
+	in_run=0
+	run_indent=0
+	line_no=0
+	violations=""
 
-	while IFS= read -r expression_line; do
-		line_no="${expression_line%%:*}"
-		[ "$line_no" -le 1 ] && continue
-		start_line=$(((line_no > 5) ? line_no - 5 : 1))
-		previous_five="$(sed -n "${start_line},$((line_no - 1))p" "$PUBLISH_WORKFLOW")"
-		if echo "$previous_five" | grep -Eq 'run:[[:space:]]*\||run:[[:space:]]*$'; then
-			echo "Version output is inlined in a shell run block at line $line_no"
-			return 1
+	while IFS= read -r line || [ -n "$line" ]; do
+		line_no=$((line_no + 1))
+
+		leading="${line%%[![:space:]]*}"
+		content="${line#"$leading"}"
+		# Blank lines carry no indentation and must not close a run block.
+		[ -n "$content" ] || continue
+		indent=${#leading}
+
+		if [ "$in_run" -eq 1 ] && [ "$indent" -le "$run_indent" ]; then
+			in_run=0
 		fi
-	done <<<"$output"
+
+		if [ "$in_run" -eq 1 ]; then
+			case "$content" in
+			*'${{'*) violations="${violations}line ${line_no}: ${content}"$'\n' ;;
+			esac
+			continue
+		fi
+
+		if [[ "$content" =~ ^run:[[:space:]]*[\|\>] ]]; then
+			in_run=1
+			run_indent=$indent
+		fi
+	done <"$PUBLISH_WORKFLOW"
+
+	if [ -n "$violations" ]; then
+		echo "Template expressions inlined in run blocks (use step-level env: instead):"
+		echo "$violations"
+		return 1
+	fi
 }

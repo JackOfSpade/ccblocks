@@ -16,23 +16,7 @@ source "$SCRIPT_DIR/common.sh"
 LABEL="ccblocks"
 PLIST_PATH="$HOME/Library/LaunchAgents/ccblocks.plist"
 
-# Resolve TRIGGER_SCRIPT path - use version-independent path for Homebrew
-# If installed via Homebrew, paths contain /Cellar/ccblocks/VERSION/ which breaks on upgrade
-# Replace with /opt/ccblocks/ symlink which always points to current version
-BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TRIGGER_SCRIPT="$BASE_DIR/ccblocks-daemon.sh"
-if [ ! -f "$TRIGGER_SCRIPT" ]; then
-	TRIGGER_SCRIPT="$BASE_DIR/libexec/ccblocks-daemon.sh"
-fi
-if [[ "$TRIGGER_SCRIPT" == */Cellar/ccblocks/* ]]; then
-	# Extract brew prefix (everything before /Cellar/)
-	BREW_PREFIX="${TRIGGER_SCRIPT%%/Cellar/ccblocks/*}"
-	# Preserve relative path after the versioned Cellar segment
-	RELATIVE_PATH="${TRIGGER_SCRIPT#"${BREW_PREFIX}"/Cellar/ccblocks/}"
-	RELATIVE_PATH="${RELATIVE_PATH#*/}" # drop version component
-	# Use opt symlink instead of versioned Cellar path
-	TRIGGER_SCRIPT="$BREW_PREFIX/opt/ccblocks/${RELATIVE_PATH}"
-fi
+TRIGGER_SCRIPT="$(resolve_trigger_script "$SCRIPT_DIR")"
 
 # Check if LaunchAgent exists
 agent_exists() {
@@ -55,11 +39,25 @@ installed_interval_seconds() {
 	sed -n '/<key>StartInterval<\/key>/{n;s/[^0-9]//g;p;}' "$PLIST_PATH"
 }
 
+# Escape the XML metacharacters a plist string can't carry literally. '&'
+# must be substituted first, otherwise it would re-escape the ampersands
+# introduced by the later entities.
+xml_escape() {
+	printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
 # Write the LaunchAgent plist using a fixed StartInterval (fires every N
 # seconds regardless of clock time). This replaces the old clock-calendar
 # approach, which required guessing clock times and missed windows when a
 # trigger hit a 100%-usage limit.
 write_plist() {
+	local escaped_path escaped_home escaped_trigger
+	escaped_path="$(xml_escape "$PATH")"
+	escaped_home="$(xml_escape "$HOME")"
+	# The install path is just as capable of containing '&' as PATH or
+	# HOME are; an unescaped one yields a plist launchctl cannot parse.
+	escaped_trigger="$(xml_escape "$TRIGGER_SCRIPT")"
+
 	cat >"$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -70,19 +68,19 @@ write_plist() {
 
     <key>ProgramArguments</key>
     <array>
-        <string>$TRIGGER_SCRIPT</string>
+        <string>$escaped_trigger</string>
     </array>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>$PATH</string>
+        <string>$escaped_path</string>
     </dict>
 
     <key>StandardOutPath</key>
-    <string>$HOME/Library/Logs/ccblocks.log</string>
+    <string>$escaped_home/Library/Logs/ccblocks.log</string>
     <key>StandardErrorPath</key>
-    <string>$HOME/Library/Logs/ccblocks.log</string>
+    <string>$escaped_home/Library/Logs/ccblocks.log</string>
 
     <key>StartInterval</key>
     <integer>$CCBLOCKS_INTERVAL_SECONDS</integer>
@@ -104,7 +102,7 @@ create_plist() {
 # Load LaunchAgent
 load_agent() {
 	if ! agent_exists; then
-		print_error "LaunchAgent plist not found. Run 'setup' first."
+		print_error "LaunchAgent plist not found. Run 'ccblocks setup' first."
 		return 1
 	fi
 
@@ -145,11 +143,19 @@ unload_agent() {
 # Start LaunchAgent immediately
 start_agent() {
 	if ! agent_loaded; then
-		print_error "LaunchAgent not loaded. Run 'load' first."
+		print_error "LaunchAgent not loaded. Run 'ccblocks setup' (or 'ccblocks resume') first."
 		return 1
 	fi
 
-	launchctl start "$LABEL"
+	# kickstart reports whether the job actually ran; `launchctl start`
+	# succeeds even for a job launchd could not spawn.
+	local uid
+	uid=$(id -u)
+	if ! launchctl kickstart "gui/$uid/$LABEL"; then
+		print_error "Failed to start LaunchAgent"
+		return 1
+	fi
+
 	print_status "LaunchAgent started (triggered manually)"
 }
 
@@ -187,22 +193,9 @@ status_agent() {
 			echo "  Unknown (could not read StartInterval from plist)"
 		fi
 		echo ""
-
-		# Show recent activity from state file
-		local last_activity="$CCBLOCKS_CONFIG/.last-activity"
-		if [ -f "$last_activity" ]; then
-			echo "Recent Activity:"
-			echo "  Last trigger: $(cat "$last_activity" 2>/dev/null || echo "unknown")"
-		else
-			echo "Recent Activity: None yet"
-		fi
 	else
 		echo "Status: ❌ Not loaded"
 	fi
-
-	echo ""
-	echo "View Logs:"
-	echo "  log show --last 1d --info --predicate 'eventMessage CONTAINS[c] \"ccblocks\"'"
 }
 
 # Remove LaunchAgent completely

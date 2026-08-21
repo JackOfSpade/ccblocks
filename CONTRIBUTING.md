@@ -13,6 +13,7 @@ cd ccblocks
 make install-deps
 
 # Install git hooks (optional but recommended)
+# Points core.hooksPath at the checked-in .githooks/ - nothing is copied into .git/hooks
 bash dev/install-hooks.sh
 ```
 
@@ -106,7 +107,10 @@ brew test jackofspade/tap/ccblocks
 1. **Make changes** to the code
 2. **Test directly** with `./ccblocks <command>`
 3. **Run tests** to verify functionality with `make test`
-4. **Commit** your changes
+4. **Check lint and formatting** with `make lint` and `make format-check` (use `make format` to fix formatting in place)
+5. **Commit** your changes
+
+`make validate` runs all three gates (`lint`, `format-check`, `test`) in one go — the same set CI runs.
 
 ### Testing Installation Paths
 
@@ -137,11 +141,18 @@ bats tests/ccblocks.bats        # Test main CLI
 bats tests/schedule-blocks.bats # Test schedule management
 
 # Analyse test coverage
-bash dev/coverage.sh      # Coverage report for all scripts
+bash dev/coverage.sh      # Coverage report for all scripts (informational, never fails)
 
 # Run shellcheck
 make lint
+
+# Check formatting (shfmt, tab indentation)
+make format-check
+make format               # Rewrite files in place to satisfy format-check
 ```
+
+`make lint`, `make format`, and `make format-check` all operate on the same file
+list (`SHELL_SOURCES` in the Makefile), which `.githooks/pre-commit` mirrors.
 
 ### Test Structure
 
@@ -150,7 +161,11 @@ make lint
 - `tests/trigger.bats` - Block trigger integration tests
 - `tests/uninstall.bats` - Uninstallation and cleanup tests
 - `tests/check-status.bats` - Status reporting tests
+- `tests/common.bats` - `lib/common.sh` unit tests
 - `tests/error-scenarios.bats` - Error handling and edge cases
+- `tests/homebrew-structure.bats` - Homebrew install-layout tests
+- `tests/workflows.bats` - GitHub Actions workflow security invariants
+- `tests/harness.bats` - Meta-tests for the test harness itself
 - `tests/test_helper.bash` - Shared test utilities and platform helpers
 
 **Coverage tool:**
@@ -170,20 +185,30 @@ ccblocks/
 │   │   ├── setup.sh            # Initial setup script
 │   │   ├── schedule.sh         # Schedule management
 │   │   ├── status.sh           # Status reporting
+│   │   ├── trigger.sh          # Manual trigger (execs ccblocks-daemon.sh)
 │   │   └── uninstall.sh        # Cleanup script
 │   └── lib/                    # Shared libraries
 │       ├── common.sh           # Shared utilities and functions
 │       ├── launchagent-helper.sh # macOS LaunchAgent management
 │       └── systemd-helper.sh   # Linux systemd management
 ├── dev/                        # Development tools
-│   └── coverage.sh             # Test coverage analysis
+│   ├── coverage.sh             # Test coverage analysis
+│   └── install-hooks.sh        # Points core.hooksPath at .githooks/
+├── scripts/                    # Helpers sourced by CI workflows
+│   └── auto_merge_decision.sh  # Auto-merge CI-gate/ancestry predicates
+├── .githooks/                  # Checked-in git hooks (core.hooksPath target)
+│   └── pre-commit              # shellcheck + shfmt on staged shell files
 └── tests/                      # Bats test files
     ├── ccblocks.bats           # Main CLI interface tests
     ├── schedule-blocks.bats    # Schedule management tests
     ├── trigger.bats            # Block trigger tests
     ├── uninstall.bats          # Uninstallation tests
     ├── check-status.bats       # Status reporting tests
+    ├── common.bats             # lib/common.sh unit tests
     ├── error-scenarios.bats    # Error handling tests
+    ├── homebrew-structure.bats # Homebrew install-layout tests
+    ├── workflows.bats          # Workflow security invariants
+    ├── harness.bats            # Meta-tests for the test harness
     └── test_helper.bash        # Test utilities and helpers
 ```
 
@@ -194,9 +219,13 @@ ccblocks/
 - **libexec/bin/setup.sh** - Handles initial installation and configuration
 - **libexec/bin/schedule.sh** - Manages the fixed 5-minute scheduler (current/pause/resume/remove)
 - **libexec/bin/status.sh** - Status dashboard with schedule and activity
+- **libexec/bin/trigger.sh** - `ccblocks trigger`; execs `libexec/ccblocks-daemon.sh` directly
 - **libexec/bin/uninstall.sh** - Safe removal with config preservation options
 - **libexec/ccblocks-daemon.sh** - Verifies subscription auth and executes the Claude CLI Haiku trigger
 - **dev/coverage.sh** - Test coverage analysis and reporting tool
+- **dev/install-hooks.sh** - Sets `core.hooksPath` to the checked-in `.githooks/`
+- **.githooks/pre-commit** - Runs shellcheck + shfmt on staged shell files
+- **scripts/auto_merge_decision.sh** - CI-gate and ancestry predicates sourced by the auto-merge workflow
 - **libexec/lib/launchagent-helper.sh** / **libexec/lib/systemd-helper.sh** - Platform-specific scheduler management
 - **libexec/lib/common.sh** - Shared functions for OS detection, logging, error handling, validation
 
@@ -243,6 +272,7 @@ print_warning "Warning message"
    ./ccblocks <your-command>  # Test directly
    make test                  # Run tests
    make lint                  # Run shellcheck
+   make format-check          # Check shfmt formatting (make format to fix)
    ```
 
 4. **Commit your changes**
@@ -265,8 +295,9 @@ print_warning "Warning message"
 
    **Automated CI Checks:**
    - All pull requests automatically run tests on both Ubuntu and macOS
-   - Shellcheck linting must pass
-   - All 111 tests must pass before merge
+   - Shellcheck linting must pass (`make lint`)
+   - shfmt formatting must pass (`make format-check`)
+   - The full bats suite must pass before merge (`make test`)
    - You can view results in the "Actions" tab of your PR
 
 ## Release Process
@@ -279,8 +310,7 @@ Releases are **automated via GitHub Actions** when the VERSION file is updated o
 
 1. **Test locally:**
    ```bash
-   make test  # Run all tests
-   make lint  # Run shellcheck
+   make validate  # lint + format-check + all tests
    ```
 
 2. **Update VERSION file:**
@@ -311,6 +341,7 @@ Before submitting a pull request, ensure:
 
 - [ ] All tests pass (`make test`)
 - [ ] Shellcheck passes (`make lint`)
+- [ ] Formatting passes (`make format-check`; `make format` rewrites in place)
 - [ ] Documentation is updated
 - [ ] Commit messages follow conventional format
 

@@ -22,6 +22,15 @@ name: Auto-merge branches to main
 #   couldn't gate on CI. Triggering when CI_WORKFLOW_NAME completes means every
 #   drain happens with a known CI result in hand, and when a branch's CI later
 #   turns green, that completion re-triggers this workflow and picks it up.
+#
+# Why this workflow dispatches CI on main after pushing:
+#   GitHub deliberately does not trigger workflows from pushes made with
+#   GITHUB_TOKEN, so the merge commit this job pushes to main would otherwise
+#   get no CI run at all — leaving main untested, and leaving publish.yml (which
+#   listens for a completed CI run on main) with nothing to fire on, so
+#   auto-merged VERSION bumps would silently never release. Explicitly
+#   dispatching CI on main after a successful push restores that chain:
+#   drain → push main → CI on main → publish.
 
 on:
   workflow_run:
@@ -32,9 +41,11 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  actions: read                # required: an explicit permissions block defaults
-                                # every unlisted scope to `none`, and the CI-gate
-                                # check reads workflow runs via the Actions API.
+  actions: write               # required: an explicit permissions block defaults
+                                # every unlisted scope to `none`. The CI gate
+                                # READS workflow runs via the Actions API, and
+                                # the post-push step DISPATCHES the CI workflow
+                                # on main, which needs write rather than read.
 
 concurrency:
   group: auto-merge-main
@@ -78,6 +89,14 @@ jobs:
 
           git checkout -B main origin/main
 
+          # Remember where main started so the CI dispatch below can be
+          # skipped when the drain turns out to be a no-op. Without this,
+          # an already-merged branch that cannot be deleted (branch
+          # protection) keeps merged_branches non-empty forever and each
+          # dispatch → Test on main → workflow_run → drain cycle dispatches
+          # again, looping indefinitely.
+          pre_drain_head="$(git rev-parse HEAD)"
+
           # Every remote branch is a candidate EXCEPT main itself (nothing to merge
           # main into) and the origin/HEAD symbolic ref (not a real branch).
           merged_branches=""
@@ -96,9 +115,14 @@ jobs:
             # commit pushed after CI passed (new tip, no green run yet) is skipped
             # until its own CI completes green. Fail closed: any non-success
             # (in-progress, failure, missing, or API error) skips the branch.
+            # event=push is required, not cosmetic: CI also runs on
+            # pull_request, and such a run reports the same head_sha while
+            # actually testing the PR's merge ref (branch + main), not the
+            # branch tip this gate promises to have tested. Without the
+            # filter the unordered per_page=1 query can return that run.
             sha="$(git rev-parse "$ref")"
             runs_json="$(gh api \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/$CI_WORKFLOW_FILE/runs?head_sha=$sha&per_page=1" \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/$CI_WORKFLOW_FILE/runs?head_sha=$sha&event=push&per_page=1" \
               2>/dev/null || echo "")"
             ci_conclusion="$(ci_conclusion_from_json "$runs_json")"
             if ! is_ci_green "$ci_conclusion"; then
@@ -132,6 +156,23 @@ jobs:
           if ! git push origin main; then
             echo "::warning::push to main failed; branches left intact for the next run."
             exit 0
+          fi
+
+          # This push carried GITHUB_TOKEN, so GitHub raises no push event for
+          # it and main gets no CI run — which also starves publish.yml. Ask for
+          # one explicitly. Best-effort: the merge already landed, so a failed
+          # dispatch must not fail the drain.
+          #
+          # Only when main actually advanced: merged_branches is also non-empty
+          # for branches already contained in main, so a stuck already-merged
+          # branch would otherwise dispatch CI on an unchanged main on every
+          # run, and each of those runs re-triggers this workflow.
+          if [ "$(git rev-parse HEAD)" != "$pre_drain_head" ]; then
+            if ! gh workflow run "$CI_WORKFLOW_FILE" --ref main; then
+              echo "::warning::Could not dispatch $CI_WORKFLOW_FILE on main. main is merged but untested and no release will be published — run the CI workflow on main manually (Actions → the CI workflow → Run workflow)."
+            fi
+          else
+            echo "::notice::main is unchanged (nothing new merged); skipping the $CI_WORKFLOW_FILE dispatch."
           fi
 
           # Delete each merged branch ONLY after re-confirming its current remote

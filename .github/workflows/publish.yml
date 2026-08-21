@@ -15,9 +15,14 @@ jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    # workflow_dispatch is accepted alongside push because auto-merge-to-main.yml
+    # has to dispatch Test on main by hand (a GITHUB_TOKEN push raises no push
+    # event). The trust property is unchanged: dispatching a workflow on this
+    # repo requires write access, and the release job still checks out the exact
+    # commit that Test ran against.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push'
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       tag_exists: ${{ steps.check_tag.outputs.exists }}
@@ -131,18 +136,27 @@ jobs:
       - name: Check Homebrew tap formula readiness
         id: tap_check
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          if FORMULA_CONTENT=$(gh api repos/jackofspade/homebrew-tap/contents/Formula/ccblocks.rb --jq '.content' | base64 -d); then
-            if echo "$FORMULA_CONTENT" | grep -qE '^\s*url\s+"'; then
-              echo "has_stable=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "has_stable=false" >> "$GITHUB_OUTPUT"
-              echo "::warning::Formula/ccblocks.rb in jackofspade/homebrew-tap only has a head block (no stable url/sha256 yet). Skipping the Homebrew publish steps for v${{ needs.validate.outputs.version }}: dawidd6/action-homebrew-bump-formula requires an existing stable spec to bump and will crash on a head-only formula. Add a real url + sha256 stanza to the formula by hand once (the v${{ needs.validate.outputs.version }} release tarball now exists at https://github.com/${{ github.repository }}/archive/refs/tags/v${{ needs.validate.outputs.version }}.tar.gz), then future VERSION bumps will publish to the tap automatically."
-            fi
+          # The fetch and the decode need separate `if`s: `if X=$(gh api ... |
+          # base64 -d)` tests base64's status, not gh's, so a failed API call
+          # decodes an empty string successfully and gets misreported as a
+          # head-only formula.
+          if ! RAW=$(gh api repos/jackofspade/homebrew-tap/contents/Formula/ccblocks.rb --jq '.content'); then
+            echo "has_stable=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Could not read Formula/ccblocks.rb from jackofspade/homebrew-tap (API/network error) to check for a stable spec. Skipping the Homebrew publish steps for v${VERSION} as a precaution rather than risk crashing dawidd6/action-homebrew-bump-formula against an unknown formula state."
+            exit 0
+          fi
+
+          FORMULA_CONTENT=$(printf '%s' "$RAW" | base64 -d)
+
+          if echo "$FORMULA_CONTENT" | grep -qE '^\s*url\s+"'; then
+            echo "has_stable=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_stable=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Could not read Formula/ccblocks.rb from jackofspade/homebrew-tap (API/network error) to check for a stable spec. Skipping the Homebrew publish steps for v${{ needs.validate.outputs.version }} as a precaution rather than risk crashing dawidd6/action-homebrew-bump-formula against an unknown formula state."
+            echo "::warning::Formula/ccblocks.rb in jackofspade/homebrew-tap only has a head block (no stable url/sha256 yet). Skipping the Homebrew publish steps for v${VERSION}: dawidd6/action-homebrew-bump-formula requires an existing stable spec to bump and will crash on a head-only formula. Add a real url + sha256 stanza to the formula by hand once (the v${VERSION} release tarball now exists at https://github.com/${REPOSITORY}/archive/refs/tags/v${VERSION}.tar.gz), then future VERSION bumps will publish to the tap automatically."
           fi
 
       - name: Publish to Homebrew tap
@@ -160,24 +174,35 @@ jobs:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          # Wait for PR to be created
-          sleep 5
-
-          # Find and merge the bump PR
-          PR_NUMBER=$(gh pr list \
-            --repo jackofspade/homebrew-tap \
-            --head "bump-ccblocks-${VERSION}" \
-            --json number \
-            --jq '.[0].number // empty')
-
-          if [ -n "$PR_NUMBER" ]; then
-            gh pr merge "$PR_NUMBER" \
+          # action-homebrew-bump-formula opens the PR asynchronously, so poll
+          # instead of assuming one fixed sleep is long enough.
+          PR_NUMBER=""
+          for attempt in $(seq 1 10); do
+            PR_NUMBER=$(gh pr list \
               --repo jackofspade/homebrew-tap \
-              --squash \
-              --subject "chore: bump ccblocks to ${VERSION}" \
-              --body ""
-            echo "✓ Merged PR #$PR_NUMBER"
-          else
-            echo "⚠ No PR found for bump-ccblocks-${VERSION}"
-            exit 1
+              --head "bump-ccblocks-${VERSION}" \
+              --json number \
+              --jq '.[0].number // empty' || true)
+
+            if [ -n "$PR_NUMBER" ]; then
+              break
+            fi
+            echo "No PR yet for bump-ccblocks-${VERSION} (attempt ${attempt}/10); retrying in 5s"
+            sleep 5
+          done
+
+          # Warn rather than fail: by this point the tag and the GitHub release
+          # already exist, and the validate job's tag_exists gate blocks any
+          # re-run of this release — so failing here would strand the tap bump
+          # permanently instead of leaving it as a one-click manual merge.
+          if [ -z "$PR_NUMBER" ]; then
+            echo "::warning::No Homebrew tap PR appeared for bump-ccblocks-${VERSION} within ~50s. The v${VERSION} tag and release are already published; merge the bump PR in jackofspade/homebrew-tap by hand to finish the Homebrew publish."
+            exit 0
           fi
+
+          gh pr merge "$PR_NUMBER" \
+            --repo jackofspade/homebrew-tap \
+            --squash \
+            --subject "chore: bump ccblocks to ${VERSION}" \
+            --body ""
+          echo "Merged PR #$PR_NUMBER"

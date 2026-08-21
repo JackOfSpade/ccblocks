@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+# Dispatcher for a machine-local pre-push hook.
+#
+# `core.hooksPath` makes git ignore .git/hooks ENTIRELY, so any pre-push a
+# developer installed there (a local CI gate, a secret scanner) silently stops
+# running the moment dev/install-hooks.sh points git at .githooks. This shim
+# hands control back to that hook when one exists.
+#
+# Note `git rev-parse --git-path hooks` is NOT usable here: it honours
+# core.hooksPath and would resolve to .githooks, i.e. this very file, so the
+# exec below would recurse forever. --git-common-dir is unaffected by
+# core.hooksPath and still points at the shared .git of a linked worktree,
+# which is where a local hooks/ directory lives.
+#
+# `exec` keeps stdin attached, which pre-push needs: git feeds the hook one
+# "<local ref> <local sha> <remote ref> <remote sha>" line per ref on stdin.
+
+set -euo pipefail
+
+git_common_dir="$(git rev-parse --git-common-dir)"
+case "$git_common_dir" in
+/*) ;;
+*) git_common_dir="$(cd "$git_common_dir" && pwd)" ;;
+esac
+
+local_hook="$git_common_dir/hooks/pre-push"
+self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+# Belt and braces: never exec ourselves, whatever the path resolution says.
+if [ -x "$local_hook" ] && [ "$local_hook" != "$self" ]; then
+	exec "$local_hook" "$@"
+fi
+
+exit 0

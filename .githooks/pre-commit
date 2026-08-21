@@ -9,7 +9,7 @@ SHELL_FILES=""
 
 for file in $STAGED; do
 	case "$file" in
-	ccblocks | libexec/ccblocks | libexec/bin/*.sh | libexec/lib/*.sh | libexec/ccblocks-daemon.sh | dev/*.sh)
+	ccblocks | libexec/ccblocks | libexec/bin/*.sh | libexec/lib/*.sh | libexec/ccblocks-daemon.sh | dev/*.sh | scripts/*.sh | .githooks/* | tests/test_helper.bash)
 		SHELL_FILES="$SHELL_FILES $file"
 		;;
 	esac
@@ -21,7 +21,8 @@ fi
 
 ERRORS=0
 
-# shellcheck
+# Lint pass: shellcheck. (A comment starting with the bare word "shellcheck"
+# would be parsed as a malformed directive and error out on this very file.)
 if command -v shellcheck &>/dev/null; then
 	for file in $SHELL_FILES; do
 		if ! git show ":$file" | shellcheck -; then

@@ -111,7 +111,24 @@ ccblocks provides:
 5. New 5-hour block starts immediately
 6. Logs success/failure to system log
 
+`ccblocks trigger` runs that same daemon script directly in your shell, rather than asking the LaunchAgent/systemd timer to fire — so you see its output and get its real exit status instead of a fire-and-forget "started".
+
 **If the trigger is rejected for hitting a usage limit:** ccblocks does not create a special job or parse reset times. It logs the failure and lets the regular 5-minute scheduler tick make the next attempt.
+
+## Environment Variables
+
+Both are off by default. Only `1` or `true` (any capitalisation of `true`) enables them; anything else, including unset, leaves them off.
+
+| Variable | Effect |
+| --- | --- |
+| `CCBLOCKS_DEBUG` | Logs the resolved `claude` command line and prints the trigger's stdout even on success. Handy when a trigger "works" but nothing seems to happen. |
+| `CCBLOCKS_STRICT_VERIFY` | Makes a trigger that ran but left no active usage block (per `ccusage`) exit non-zero instead of warning and exiting 0. |
+
+```bash
+CCBLOCKS_DEBUG=1 ccblocks trigger
+```
+
+A manual `ccblocks trigger` runs the trigger in your current shell, so exported API/provider credentials (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY`) cause the same refusal there as they would for a scheduled run — unset them, or trigger from a clean shell.
 
 ## Status & Monitoring
 

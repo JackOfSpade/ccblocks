@@ -37,27 +37,10 @@ teardown() {
     if [[ "$(uname)" == "Darwin" ]]; then
         [ "$HELPER" = "$PROJECT_RUNTIME_DIR/lib/launchagent-helper.sh" ]
         [ "$CONFIG_PATH" = "$HOME/Library/LaunchAgents/ccblocks.plist" ]
-        [ "$LOAD_CMD" = "load" ]
-        [ "$UNLOAD_CMD" = "unload" ]
     else
         [ "$HELPER" = "$PROJECT_RUNTIME_DIR/lib/systemd-helper.sh" ]
         [ "$CONFIG_PATH" = "$HOME/.config/systemd/user/ccblocks@.service" ]
         [ "$TIMER_PATH" = "$HOME/.config/systemd/user/ccblocks@.timer" ]
-        [ "$LOAD_CMD" = "enable" ]
-        [ "$UNLOAD_CMD" = "disable" ]
-    fi
-}
-
-@test "get_helper_script returns the platform helper" {
-    detect_os
-
-    run get_helper_script "$PROJECT_RUNTIME_DIR"
-    assert_success
-
-    if [[ "$(uname)" == "Darwin" ]]; then
-        assert_output "$PROJECT_RUNTIME_DIR/lib/launchagent-helper.sh"
-    else
-        assert_output "$PROJECT_RUNTIME_DIR/lib/systemd-helper.sh"
     fi
 }
 
@@ -87,4 +70,36 @@ teardown() {
 
     run require_subscription_auth claude
     assert_success
+}
+
+@test "require_subscription_auth rejects truthy provider flag variants" {
+    for flag_value in 1 true TRUE True; do
+        export CLAUDE_CODE_USE_BEDROCK="$flag_value"
+        mock_claude_success
+
+        run require_subscription_auth claude
+        assert_failure
+        assert_output --partial "CLAUDE_CODE_USE_BEDROCK"
+    done
+}
+
+@test "require_subscription_auth fails when claude auth status errors" {
+    mock_command "claude" '
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+    exit 1
+fi
+exit 0'
+
+    run require_subscription_auth claude
+    assert_failure
+    assert_output --partial "claude auth login"
+}
+
+@test "require_subscription_auth accepts subscription auth-method aliases" {
+    for auth_method in subscription claudeai claudeAi claude.ai oauth_subscription; do
+        mock_claude_auth_method "$auth_method"
+
+        run require_subscription_auth claude
+        assert_success
+    done
 }

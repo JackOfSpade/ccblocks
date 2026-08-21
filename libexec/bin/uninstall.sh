@@ -9,6 +9,11 @@ set -E
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Root of the installation itself - this script lives in
+# <install_root>/libexec/bin, so removal/reinstall advice must talk about
+# the root, not this directory.
+INSTALL_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 # Source common library
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
@@ -31,7 +36,7 @@ show_removal_plan() {
 	if [ -f "$CONFIG_PATH" ]; then
 		echo "✅ $SCHEDULER_NAME:"
 		echo "   Location: $CONFIG_PATH"
-		if [[ "$OS_TYPE" == "Darwin" ]] && launchctl list | grep -q "ccblocks"; then
+		if [[ "$OS_TYPE" == "Darwin" ]] && launchctl list | grep -qw "ccblocks"; then
 			echo "   Status: Currently loaded (will be unloaded)"
 		elif [[ "$OS_TYPE" == "Linux" ]] && systemctl --user is-active ccblocks@default.timer &>/dev/null; then
 			echo "   Status: Currently active (will be disabled)"
@@ -45,9 +50,9 @@ show_removal_plan() {
 	fi
 
 	# Check for project directory
-	if [ -d "$SCRIPT_DIR" ]; then
+	if [ -d "$INSTALL_ROOT" ]; then
 		echo "📂 Project Directory:"
-		echo "   Location: $SCRIPT_DIR"
+		echo "   Location: $INSTALL_ROOT"
 		echo "   Action: Keep directory (you can manually delete if desired)"
 		echo ""
 	fi
@@ -73,22 +78,24 @@ remove_scheduler() {
 
 	if ! [ -f "$CONFIG_PATH" ]; then
 		print_warning "No $SCHEDULER_NAME found"
-		return 0
 	fi
 
-	# Use helper to remove
+	# Run the helper regardless: a hand-deleted plist/unit file leaves the
+	# agent still bootstrapped (or the timer still enabled), and only the
+	# helper clears that runtime state.
 	if ! "$HELPER" remove; then
 		print_warning "Helper script failed, attempting direct cleanup..."
 		fallback_cleanup
-	fi
-
-	# Verify removal and do final cleanup if needed
-	if [ -f "$CONFIG_PATH" ]; then
+	elif [ -f "$CONFIG_PATH" ]; then
 		print_warning "Scheduler files still present, performing final cleanup..."
 		fallback_cleanup
 	fi
 
-	print_status "$SCHEDULER_NAME removed successfully"
+	if [ -f "$CONFIG_PATH" ]; then
+		print_warning "$SCHEDULER_NAME could not be fully removed; $CONFIG_PATH is still present"
+	else
+		print_status "$SCHEDULER_NAME removed successfully"
+	fi
 }
 
 # Fallback cleanup - directly remove scheduler files if helper fails
@@ -220,7 +227,10 @@ prompt_config_removal() {
 	print_warning "This directory contains your ccblocks configuration"
 	echo "If you plan to reinstall ccblocks later, you may want to keep these files."
 	echo ""
-	read -r -p "Remove configuration directory? [Y/n]: " confirm
+	# `read` assigns what it consumed before EOF (empty on an immediate
+	# EOF), so `|| true` stays set -u safe while preserving an
+	# unterminated answer like `printf n`.
+	read -r -p "Remove configuration directory? [Y/n]: " confirm || true
 
 	if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
 		print_status "Configuration preserved at: $CCBLOCKS_CONFIG"
@@ -247,6 +257,19 @@ remove_config() {
 		print_error "Failed to remove configuration directory"
 		echo "You can manually remove it with: rm -rf $CCBLOCKS_CONFIG"
 		return 1
+	fi
+}
+
+# Command that removes the installed files themselves. A Homebrew install
+# lives in the Cellar and must go through brew, or the next `brew` command
+# finds a half-deleted keg.
+removal_command() {
+	if [[ "$INSTALL_ROOT" == */Cellar/ccblocks/* ]]; then
+		echo "brew uninstall ccblocks"
+	else
+		# Quote the path: an install root containing a space would
+		# otherwise be advice that deletes the wrong thing.
+		echo "rm -rf \"$INSTALL_ROOT\""
 	fi
 }
 
@@ -280,7 +303,7 @@ Actions Performed:
 - Configuration directory: $config_status
 - Created this log file
 
-Project Directory: $SCRIPT_DIR
+Project Directory: $INSTALL_ROOT
 (Preserved - delete manually if desired)
 
 Configuration: $config_status
@@ -288,11 +311,10 @@ $([ "$config_status" = "Preserved" ] && echo "Location: $CCBLOCKS_CONFIG
 To remove: rm -rf $CCBLOCKS_CONFIG" || echo "Configuration was removed from: $CCBLOCKS_CONFIG")
 
 To completely remove ccblocks:
-  rm -rf "$SCRIPT_DIR"
+  $(removal_command)
 
 To reinstall ccblocks:
-  cd "$SCRIPT_DIR"
-  ./setup.sh
+  ccblocks setup
 
 Uninstallation completed successfully.
 EOF
@@ -321,7 +343,7 @@ show_completion() {
 	echo "   ✅ $SCHEDULER_NAME disabled and removed"
 	echo "   $config_status_icon Configuration $config_status_text"
 	echo "   ✅ Created uninstall log"
-	echo "   📂 Project directory preserved at: $SCRIPT_DIR"
+	echo "   📂 Project directory preserved at: $INSTALL_ROOT"
 	echo ""
 
 	echo "🔄 To verify removal:"
@@ -335,16 +357,14 @@ show_completion() {
 	echo ""
 
 	echo "🗑️  To completely remove ccblocks:"
+	echo "   $(removal_command)"
 	if [ -d "$CCBLOCKS_CONFIG" ]; then
-		echo "   rm -rf $SCRIPT_DIR $CCBLOCKS_CONFIG"
-	else
-		echo "   rm -rf $SCRIPT_DIR"
+		echo "   rm -rf $CCBLOCKS_CONFIG"
 	fi
 	echo ""
 
 	echo "🔧 To reinstall later:"
-	echo "   cd $SCRIPT_DIR"
-	echo "   ./setup.sh"
+	echo "   ccblocks setup"
 	echo ""
 
 	print_status "Thank you for using ccblocks!"
@@ -400,7 +420,9 @@ main() {
 	if [ "$force" = false ]; then
 		echo ""
 		print_warning "This will remove the ccblocks $SCHEDULER_NAME"
-		read -r -p "Proceed with uninstallation? [Y/n]: " confirm
+		# See prompt_config_removal: `|| true` keeps set -u happy without
+		# throwing away a partial (unterminated) answer.
+		read -r -p "Proceed with uninstallation? [Y/n]: " confirm || true
 
 		if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
 			print_status "Uninstallation cancelled"

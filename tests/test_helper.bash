@@ -23,79 +23,75 @@ load "${BATS_LIB_PREFIX}/lib/bats-assert/load.bash"
 # Get the root directory of the project
 PROJECT_ROOT="$(cd "${BATS_TEST_DIRNAME}/.." && pwd)"
 PROJECT_RUNTIME_DIR="${PROJECT_ROOT}/libexec"
-PROJECT_BIN_DIR="${PROJECT_RUNTIME_DIR}/bin"
+# Consumed by tests/common.bats, which shellcheck cannot see from here.
+# shellcheck disable=SC2034
 PROJECT_LIB_DIR="${PROJECT_RUNTIME_DIR}/lib"
 TEST_ORIGINAL_PATH="$PATH"
 
 # Test-specific temporary directory
 setup_test_dir() {
-    TEST_TEMP_DIR="$(mktemp -d)"
-    export TEST_TEMP_DIR
-    unset MOCK_BIN_DIR
-    export PATH="$TEST_ORIGINAL_PATH"
+	TEST_TEMP_DIR="$(mktemp -d)"
+	export TEST_TEMP_DIR
+	unset MOCK_BIN_DIR
+	export PATH="$TEST_ORIGINAL_PATH"
 
-    # Sandbox the config dir so no script under test can touch the
-    # user's real ~/.config/ccblocks; tests may re-export their own
-    # temp path on top of this default.
-    export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
+	# Sandbox the config dir so no script under test can touch the
+	# user's real ~/.config/ccblocks; tests may re-export their own
+	# temp path on top of this default.
+	export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
 
-    # Sandbox against the host's own environment too: a corporate proxy,
-    # LLM gateway, or coding-agent sandbox may already have provider
-    # credentials set, which would make credential-refusal assertions
-    # and "trigger succeeds" tests fail for reasons that have nothing to
-    # do with the code under test. Individual tests that specifically
-    # exercise the refusal behaviour re-export these on top of this
-    # baseline.
-    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
-    unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY
+	# Sandbox against the host's own environment too: a corporate proxy,
+	# LLM gateway, or coding-agent sandbox may already have provider
+	# credentials set, which would make credential-refusal assertions
+	# and "trigger succeeds" tests fail for reasons that have nothing to
+	# do with the code under test. Individual tests that specifically
+	# exercise the refusal behaviour re-export these on top of this
+	# baseline.
+	unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+	unset CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY
 }
 
 teardown_test_dir() {
-    if [ -n "${TEST_TEMP_DIR}" ] && [ -d "${TEST_TEMP_DIR}" ]; then
-        rm -rf "${TEST_TEMP_DIR}"
-    fi
+	if [ -n "${TEST_TEMP_DIR}" ] && [ -d "${TEST_TEMP_DIR}" ]; then
+		rm -rf "${TEST_TEMP_DIR}"
+	fi
 }
 
 # Mock commands by creating temporary scripts in PATH
 mock_command() {
-    local cmd_name="$1"
-    local mock_script="$2"
+	local cmd_name="$1"
+	local mock_script="$2"
 
-    # Create mock bin directory if it doesn't exist
-    if [ -z "${MOCK_BIN_DIR}" ]; then
-        MOCK_BIN_DIR="${TEST_TEMP_DIR}/mock_bin"
-        mkdir -p "${MOCK_BIN_DIR}"
+	# Create mock bin directory if it doesn't exist
+	if [ -z "${MOCK_BIN_DIR}" ]; then
+		MOCK_BIN_DIR="${TEST_TEMP_DIR}/mock_bin"
+		mkdir -p "${MOCK_BIN_DIR}"
 
-        # Copy lib directory to mock bin for scripts that need it
-        if [ -d "${PROJECT_ROOT}/libexec/lib" ]; then
-            cp -r "${PROJECT_ROOT}/libexec/lib" "${MOCK_BIN_DIR}/"
-        fi
+		export PATH="${MOCK_BIN_DIR}:${PATH}"
+	fi
 
-        export PATH="${MOCK_BIN_DIR}:${PATH}"
-    fi
-
-    # Create mock script
-    cat > "${MOCK_BIN_DIR}/${cmd_name}" << EOF
+	# Create mock script
+	cat >"${MOCK_BIN_DIR}/${cmd_name}" <<EOF
 #!/usr/bin/env bash
 ${mock_script}
 EOF
-    chmod +x "${MOCK_BIN_DIR}/${cmd_name}"
+	chmod +x "${MOCK_BIN_DIR}/${cmd_name}"
 }
 
 # Canonical `claude auth status --json` payload used by all claude mocks
 claude_auth_json() {
-    local logged_in="${1:-true}"
-    local auth_method="${2:-subscription}"
-    local api_provider="${3:-firstParty}"
-    printf '{"loggedIn":%s,"authMethod":"%s","apiProvider":"%s"}' \
-        "$logged_in" "$auth_method" "$api_provider"
+	local logged_in="${1:-true}"
+	local auth_method="${2:-subscription}"
+	local api_provider="${3:-firstParty}"
+	printf '{"loggedIn":%s,"authMethod":"%s","apiProvider":"%s"}' \
+		"$logged_in" "$auth_method" "$api_provider"
 }
 
 # Build a claude mock that answers `auth status` with $1 and otherwise runs $2
 mock_claude_with_auth() {
-    local auth_json="$1"
-    local body="$2"
-    mock_command "claude" "
+	local auth_json="$1"
+	local body="$2"
+	mock_command "claude" "
 if [ \"\$1\" = \"auth\" ] && [ \"\$2\" = \"status\" ]; then
     echo '${auth_json}'
     exit 0
@@ -105,10 +101,10 @@ ${body}"
 
 # Write a standalone auth-aware claude mock script to an arbitrary path
 write_claude_mock_script() {
-    local path="$1"
-    local auth_json="${2:-$(claude_auth_json)}"
-    mkdir -p "$(dirname "$path")"
-    cat > "$path" << EOF
+	local path="$1"
+	local auth_json="${2:-$(claude_auth_json)}"
+	mkdir -p "$(dirname "$path")"
+	cat >"$path" <<EOF
 #!/usr/bin/env bash
 if [ "\$1" = "auth" ] && [ "\$2" = "status" ]; then
     echo '${auth_json}'
@@ -116,14 +112,19 @@ if [ "\$1" = "auth" ] && [ "\$2" = "status" ]; then
 fi
 exit 0
 EOF
-    chmod +x "$path"
+	chmod +x "$path"
 }
 
 # Mock claude command that simulates successful execution
 mock_claude_success() {
-    mock_claude_with_auth "$(claude_auth_json)" '
+	# One argument per line, angle-bracketed, so tests can assert on
+	# individual flags including deliberately empty values (--tools "").
+	# Single-quoted on purpose: this body is the generated mock's source, so
+	# $@ and $CCBLOCKS_CLAUDE_ARGS_LOG must expand when the mock runs.
+	# shellcheck disable=SC2016
+	mock_claude_with_auth "$(claude_auth_json)" '
 if [ -n "${CCBLOCKS_CLAUDE_ARGS_LOG:-}" ]; then
-    printf "%s\n" "$*" >> "$CCBLOCKS_CLAUDE_ARGS_LOG"
+    printf "<%s>\n" "$@" >> "$CCBLOCKS_CLAUDE_ARGS_LOG"
 fi
 echo "Claude mock: Success"
 exit 0'
@@ -131,61 +132,44 @@ exit 0'
 
 # Mock claude command that fails
 mock_claude_failure() {
-    mock_claude_with_auth "$(claude_auth_json)" '
+	mock_claude_with_auth "$(claude_auth_json)" '
 echo "Claude mock: Failed" >&2
 exit 1'
 }
 
 # Mock claude command with a non-subscription auth status
 mock_claude_auth_method() {
-    local auth_method="$1"
-    local api_provider="${2:-firstParty}"
-    mock_claude_with_auth "$(claude_auth_json true "$auth_method" "$api_provider")" '
+	local auth_method="$1"
+	local api_provider="${2:-firstParty}"
+	mock_claude_with_auth "$(claude_auth_json true "$auth_method" "$api_provider")" '
 echo "Claude mock: Success"
 exit 0'
 }
 
 # Mock claude command with no authenticated user
 mock_claude_logged_out() {
-    mock_claude_with_auth "$(claude_auth_json false none)" '
+	mock_claude_with_auth "$(claude_auth_json false none)" '
 echo "Claude mock: Success"
 exit 0'
 }
 
 # Mock claude command with subscription auth but failing trigger
 mock_claude_trigger_timeout() {
-    mock_claude_with_auth "$(claude_auth_json)" 'exit 124'
+	mock_claude_with_auth "$(claude_auth_json)" 'exit 124'
 }
 
 # Mock claude command that records all invocations
 mock_claude_call_recorder() {
-    local calls_file="$1"
-    mock_command "claude" "
+	local calls_file="$1"
+	mock_command "claude" "
 printf '%s\n' \"\$*\" >> \"${calls_file}\"
 echo 'Claude mock: Success'
 exit 0"
 }
 
-# Mock claude command with /usage output showing active block
-mock_claude_with_active_block() {
-    local percent="${1:-50}"
-    mock_command "claude" "cat <<'USAGE_EOF'
-Current session: ${percent}%
-Tokens used: 50000
-USAGE_EOF"
-}
-
-# Mock claude command with /usage output showing expired block
-mock_claude_with_expired_block() {
-    mock_command "claude" "cat <<'USAGE_EOF'
-Current session: 100%
-Session expired
-USAGE_EOF"
-}
-
 # Mock ccusage command showing active block
 mock_ccusage_active_block() {
-    mock_command "ccusage" "cat <<'CCUSAGE_EOF'
+	mock_command "ccusage" "cat <<'CCUSAGE_EOF'
 Block 1 (Current)
 Time remaining: 2h 30m
 CCUSAGE_EOF"
@@ -193,23 +177,23 @@ CCUSAGE_EOF"
 
 # Mock ccusage command showing no active block
 mock_ccusage_no_block() {
-    mock_command "ccusage" "echo 'No active blocks'; exit 0"
+	mock_command "ccusage" "echo 'No active blocks'; exit 0"
 }
 
 # Mock ccusage not installed
 mock_ccusage_not_installed() {
-    # Simulate command not found even if the host has a real ccusage
-    # installed somewhere in the original PATH.
-    if [ -z "${MOCK_BIN_DIR}" ]; then
-        MOCK_BIN_DIR="${TEST_TEMP_DIR}/mock_bin"
-        mkdir -p "${MOCK_BIN_DIR}"
-    fi
-    export PATH="${MOCK_BIN_DIR}:/usr/bin:/bin"
+	# Simulate command not found even if the host has a real ccusage
+	# installed somewhere in the original PATH.
+	if [ -z "${MOCK_BIN_DIR}" ]; then
+		MOCK_BIN_DIR="${TEST_TEMP_DIR}/mock_bin"
+		mkdir -p "${MOCK_BIN_DIR}"
+	fi
+	export PATH="${MOCK_BIN_DIR}:/usr/bin:/bin"
 }
 
 # Mock ccusage with alternative format (e.g., time format variations)
 mock_ccusage_alternative_format() {
-    mock_command "ccusage" "cat <<'CCUSAGE_EOF'
+	mock_command "ccusage" "cat <<'CCUSAGE_EOF'
 Active block
 3h 15m remaining
 CCUSAGE_EOF"
@@ -217,93 +201,18 @@ CCUSAGE_EOF"
 
 # Mock ccusage with empty output
 mock_ccusage_empty_output() {
-    mock_command "ccusage" "echo ''; exit 0"
-}
-
-# Create a fake activity file with specific timestamp
-create_activity_file() {
-    local age_seconds="$1"
-    local activity_file="${TEST_TEMP_DIR}/.claude-last-activity"
-
-    # Calculate timestamp
-    local current_time
-    current_time=$(date +%s)
-    local activity_time=$((current_time - age_seconds))
-
-    # Create file and set timestamp
-    echo "$activity_time" > "$activity_file"
-
-    # On macOS, use touch -t to set modification time
-    # On Linux, use touch -d
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        touch -t "$(date -r "$activity_time" +%Y%m%d%H%M.%S)" "$activity_file" 2>/dev/null || true
-    else
-        touch -d "@${activity_time}" "$activity_file" 2>/dev/null || true
-    fi
-
-    echo "$activity_file"
-}
-
-# Mock crontab command
-mock_crontab() {
-    local crontab_content="$1"
-
-    mock_command "crontab" "
-if [ \"\$1\" = '-l' ]; then
-    if [ -z '${crontab_content}' ]; then
-        echo 'crontab: no crontab for \$(whoami)' >&2
-        exit 1
-    fi
-    cat <<'CRONTAB_EOF'
-${crontab_content}
-CRONTAB_EOF
-    exit 0
-elif [ \"\$1\" = '-r' ]; then
-    # Remove crontab
-    exit 0
-else
-    # Accept new crontab from stdin
-    cat > /dev/null
-    exit 0
-fi
-"
-}
-
-# Assert that a file contains a specific pattern
-assert_file_contains() {
-    local file="$1"
-    local pattern="$2"
-
-    assert [ -f "$file" ]
-    run grep -q "$pattern" "$file"
-    assert_success
-}
-
-# Assert that a command is available in PATH
-assert_command_exists() {
-    local cmd="$1"
-    run command -v "$cmd"
-    assert_success
-}
-
-# Capture and return stderr
-run_with_stderr() {
-    local stderr_file="${TEST_TEMP_DIR}/stderr.txt"
-    "$@" 2> "$stderr_file"
-    local exit_code=$?
-    STDERR_OUTPUT="$(cat "$stderr_file")"
-    return $exit_code
+	mock_command "ccusage" "echo ''; exit 0"
 }
 
 # Platform-specific test skip helpers
 skip_if_not_macos() {
-    if [[ "$(uname)" != "Darwin" ]]; then
-        skip "macOS only test"
-    fi
+	if [[ "$(uname)" != "Darwin" ]]; then
+		skip "macOS only test"
+	fi
 }
 
 skip_if_not_linux() {
-    if [[ "$(uname)" != "Linux" ]]; then
-        skip "Linux only test"
-    fi
+	if [[ "$(uname)" != "Linux" ]]; then
+		skip "Linux only test"
+	fi
 }

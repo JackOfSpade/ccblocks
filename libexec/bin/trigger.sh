@@ -21,14 +21,16 @@ case "${1:-}" in
 	echo ""
 	echo "Usage: ccblocks trigger"
 	echo ""
-	echo "Manually triggers a new 5-hour Claude Code block right now, the same"
-	echo "way a scheduled LaunchAgent/systemd run would."
+	echo "Manually triggers a new 5-hour Claude Code block right now by running"
+	echo "the same trigger script scheduled runs execute, so its result and"
+	echo "output are reported directly."
 	exit 0
 	;;
 esac
 
-# Detect OS and initialise OS-specific variables
 detect_os || exit 1
-init_os_vars "$SCRIPT_DIR/.." || exit 1
 
-exec "$HELPER" start
+# Run the daemon inline rather than asking the scheduler to start it:
+# `launchctl start` is fire-and-forget, so going through the helper would
+# always report success and hide a real trigger failure.
+exec "$SCRIPT_DIR/../ccblocks-daemon.sh"

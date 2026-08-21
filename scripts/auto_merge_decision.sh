@@ -17,21 +17,21 @@
 # Requires `jq`. NOTE: jq treats a completely empty stdin as "no output, exit 0" (not an error), so an
 # empty/missing `$1` is checked explicitly rather than relying on jq's own exit code for that case.
 ci_conclusion_from_json() {
-  local out
-  if [ -n "$1" ] \
-     && out="$(printf '%s' "$1" | jq -r '.workflow_runs[0].conclusion // "none"' 2>/dev/null)" \
-     && [ -n "$out" ]; then
-    printf '%s\n' "$out"
-  else
-    echo "error"
-  fi
+	local out
+	if [ -n "$1" ] &&
+		out="$(printf '%s' "$1" | jq -r '.workflow_runs[0].conclusion // "none"' 2>/dev/null)" &&
+		[ -n "$out" ]; then
+		printf '%s\n' "$out"
+	else
+		echo "error"
+	fi
 }
 
 # is_ci_green <conclusion> — fail-closed: ONLY an exact "success" counts as green. Any other value
 # (in-progress, failure, "none", "error") is NOT green, so a missing/ambiguous CI result blocks the
 # merge instead of silently defaulting to allow.
 is_ci_green() {
-  [ "$1" = "success" ]
+	[ "$1" = "success" ]
 }
 
 # is_ancestor_of <maybe-ancestor-ref> <descendant-ref> — true (exit 0) if the first ref's commit is
@@ -40,5 +40,5 @@ is_ci_green() {
 # tip advanced after the merge decision was made must NOT look like an ancestor, so it must NOT be
 # deleted).
 is_ancestor_of() {
-  git merge-base --is-ancestor "$1" "$2"
+	git merge-base --is-ancestor "$1" "$2"
 }

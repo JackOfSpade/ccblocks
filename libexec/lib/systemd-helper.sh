@@ -16,10 +16,7 @@ source "$SCRIPT_DIR/common.sh"
 SERVICE_NAME="ccblocks"
 SERVICE_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}@.service"
 TIMER_FILE="$HOME/.config/systemd/user/${SERVICE_NAME}@.timer"
-TRIGGER_SCRIPT="$SCRIPT_DIR/../ccblocks-daemon.sh"
-if [ ! -f "$TRIGGER_SCRIPT" ]; then
-	TRIGGER_SCRIPT="$SCRIPT_DIR/../libexec/ccblocks-daemon.sh"
-fi
+TRIGGER_SCRIPT="$(resolve_trigger_script "$SCRIPT_DIR")"
 
 # Check if service exists
 service_exists() {
@@ -32,11 +29,14 @@ service_exists() {
 # CCBLOCKS_INTERVAL_MINUTES when the timer predates a version that changed
 # the interval and 'ccblocks setup' hasn't re-run yet.
 installed_interval_minutes() {
-	service_exists || return 1
+	[ -f "$TIMER_FILE" ] || return 1
 	sed -n 's/^OnUnitActiveSec=\([0-9][0-9]*\)min$/\1/p' "$TIMER_FILE"
 }
 
-# Write the systemd service unit file.
+# Write the systemd service unit file. ExecStart is quoted for the same
+# reason Environment=PATH is: systemd word-splits an unquoted value, so an
+# install under a path containing a space would produce a unit whose
+# ExecStart is a truncated path.
 write_service_file() {
 	# Create systemd user directory if it doesn't exist
 	mkdir -p "$HOME/.config/systemd/user"
@@ -48,15 +48,18 @@ After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=$TRIGGER_SCRIPT
+ExecStart="$TRIGGER_SCRIPT"
 SyslogIdentifier=ccblocks
-Environment=PATH=$PATH
+Environment="PATH=$PATH"
 EOF
 }
 
 # Write the systemd timer unit file using a fixed repeating interval.
 # There is no schedule to configure - the timer fires at a fixed interval
-# (CCBLOCKS_INTERVAL_MINUTES) after activation.
+# (CCBLOCKS_INTERVAL_MINUTES) after activation. [Install] is what makes
+# `systemctl --user enable ccblocks@default.timer` create the
+# timers.target.wants symlink for that instance; without it the unit is
+# 'static' and nothing pulls the timer back in at the next login.
 write_timer_file() {
 	cat >"$TIMER_FILE" <<EOF
 [Unit]
@@ -66,6 +69,9 @@ Description=ccblocks Scheduling Timer (%i)
 OnBootSec=${CCBLOCKS_INTERVAL_MINUTES}min
 OnUnitActiveSec=${CCBLOCKS_INTERVAL_MINUTES}min
 Persistent=true
+
+[Install]
+WantedBy=timers.target
 EOF
 }
 
@@ -80,7 +86,7 @@ create_service() {
 # Enable and start timer
 enable_timer() {
 	if ! service_exists; then
-		print_error "Service files not found. Run 'create' first."
+		print_error "Service files not found. Run 'ccblocks setup' first."
 		return 1
 	fi
 
@@ -94,21 +100,33 @@ enable_timer() {
 	print_status "Timer enabled and started"
 }
 
-# Disable and stop timer
+# Disable and stop timer. Active and enabled are independent states: a
+# running-but-not-enabled timer still has to be stopped, or 'pause' leaves
+# it firing.
 disable_timer() {
-	if systemctl --user is-enabled "${SERVICE_NAME}@default.timer" &>/dev/null; then
+	local acted=false
+
+	if systemctl --user is-active "${SERVICE_NAME}@default.timer" &>/dev/null; then
 		systemctl --user stop "${SERVICE_NAME}@default.timer"
+		print_status "Timer stopped"
+		acted=true
+	fi
+
+	if systemctl --user is-enabled "${SERVICE_NAME}@default.timer" &>/dev/null; then
 		systemctl --user disable "${SERVICE_NAME}@default.timer"
-		print_status "Timer disabled and stopped"
-	else
-		print_warning "Timer not enabled"
+		print_status "Timer disabled"
+		acted=true
+	fi
+
+	if [ "$acted" = false ]; then
+		print_warning "Timer not active or enabled"
 	fi
 }
 
 # Start service immediately
 start_service() {
 	if ! service_exists; then
-		print_error "Service files not found. Run 'create' first."
+		print_error "Service files not found. Run 'ccblocks setup' first."
 		return 1
 	fi
 
@@ -141,7 +159,7 @@ status_service() {
 		# already-installed timer until 'ccblocks setup' is re-run.
 		echo "Schedule:"
 		local installed_minutes
-		installed_minutes="$(installed_interval_minutes)"
+		installed_minutes="$(installed_interval_minutes || true)"
 		if [ -n "$installed_minutes" ]; then
 			echo "  Every $installed_minutes minutes"
 			if [ "$installed_minutes" -ne "$CCBLOCKS_INTERVAL_MINUTES" ]; then
@@ -157,32 +175,23 @@ status_service() {
 		echo "Next Trigger:"
 		systemctl --user list-timers "${SERVICE_NAME}@default.timer" --no-pager | grep -v "^NEXT" | grep "${SERVICE_NAME}" | sed 's/^/  /' || echo "  (calculating...)"
 		echo ""
-
-		# Show recent activity from state file
-		local last_activity="$CCBLOCKS_CONFIG/.last-activity"
-		if [ -f "$last_activity" ]; then
-			echo "Recent Activity:"
-			echo "  Last trigger: $(cat "$last_activity" 2>/dev/null || echo "unknown")"
-		else
-			echo "Recent Activity: None yet"
-		fi
 	else
 		echo "Status: ❌ Timer not active"
 	fi
-
-	echo ""
-	echo "View Logs:"
-	echo "  journalctl --user -t ccblocks -n 50"
 }
 
 # Remove service/timer completely
 remove_service() {
-	if systemctl --user is-active "${SERVICE_NAME}@default.timer" &>/dev/null; then
-		disable_timer
-	fi
+	# Unconditional: disable_timer is idempotent and handles active and
+	# enabled independently. Gating on is-active would leave an
+	# enabled-but-stopped timer's timers.target.wants symlink dangling
+	# after the unit files are deleted below.
+	disable_timer
 
-	if service_exists; then
-		rm "$SERVICE_FILE" "$TIMER_FILE"
+	# Either unit file may already be gone (hand-deleted, or a partial
+	# install); remove whatever is left and always reload afterwards.
+	if [ -f "$SERVICE_FILE" ] || [ -f "$TIMER_FILE" ]; then
+		rm -f "$SERVICE_FILE" "$TIMER_FILE"
 		systemctl --user daemon-reload
 		print_status "Removed systemd service and timer files"
 	fi

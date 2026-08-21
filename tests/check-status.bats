@@ -7,6 +7,11 @@ load test_helper
 setup() {
     setup_test_dir
 
+    # Sandbox HOME so init_os_vars' CONFIG_PATH points inside the test
+    # directory instead of the developer's real LaunchAgent/systemd units.
+    export HOME="${TEST_TEMP_DIR}/home"
+    mkdir -p "$HOME"
+
     # Copy libexec into the sandbox so mocking the OS helper below never
     # touches the real repository file - this is safe regardless of how
     # the test ends (pass, fail, or killed mid-run), unlike mutating the

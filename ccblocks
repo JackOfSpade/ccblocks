@@ -4,5 +4,21 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlinks so a `ln -s` into a bin directory still finds libexec.
+# readlink follows one hop and cannot detect a cycle, so bound the walk:
+# a symlink loop would otherwise spin here forever.
+SOURCE="${BASH_SOURCE[0]}"
+hops=0
+while [ -L "$SOURCE" ]; do
+	hops=$((hops + 1))
+	if [ "$hops" -gt 40 ]; then
+		echo "Error: too many symlink levels resolving ${BASH_SOURCE[0]} (symlink loop?)" >&2
+		exit 1
+	fi
+	DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+	SOURCE="$(readlink "$SOURCE")"
+	[[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
 exec "$SCRIPT_DIR/libexec/ccblocks" "$@"

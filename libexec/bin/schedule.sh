@@ -69,7 +69,9 @@ main() {
 
 	case "$action" in
 	current)
-		"$HELPER" status
+		# A not-yet-installed scheduler makes the helper exit non-zero;
+		# that is legitimate output, not a crash (mirrors status.sh).
+		"$HELPER" status || true
 		;;
 	pause)
 		pause_schedule

@@ -8,6 +8,16 @@ load test_helper
 setup() {
     setup_test_dir
 
+    # Sandbox HOME so uninstall.sh's CONFIG_PATH and fallback_cleanup can
+    # never see or delete the developer's real LaunchAgent plist / systemd
+    # units. Also neutralise the real scheduler managers: fallback_cleanup
+    # shells out to launchctl/systemctl, and tests must never touch the
+    # live user session.
+    export HOME="${TEST_TEMP_DIR}/home"
+    mkdir -p "$HOME"
+    mock_command "launchctl" 'exit 0'
+    mock_command "systemctl" 'exit 0'
+
     # Copy libexec into the sandbox so mocking the OS helper below never
     # touches the real repository file - this is safe regardless of how
     # the test ends (pass, fail, or killed mid-run), unlike mutating the
@@ -175,12 +185,11 @@ EOF
 
 # Scheduler removal tests
 @test "uninstall calls helper remove command" {
-    # Create platform-specific config file so the helper remove command gets called
+    # Create platform-specific config file so the helper remove command gets
+    # called (HOME is sandboxed in setup, so this never touches the real one)
     if [[ "$(uname)" == "Darwin" ]]; then
-        mkdir -p "$HOME/Library/LaunchAgents" 2>/dev/null || true
-        if ! touch "$HOME/Library/LaunchAgents/ccblocks.plist" 2>/dev/null; then
-            skip "Cannot write to ~/Library/LaunchAgents in this environment"
-        fi
+        mkdir -p "$HOME/Library/LaunchAgents"
+        touch "$HOME/Library/LaunchAgents/ccblocks.plist"
     else
         mkdir -p "$HOME/.config/systemd/user"
         touch "$HOME/.config/systemd/user/ccblocks@.service"
@@ -190,20 +199,15 @@ EOF
     assert_success
     # Check that scheduler removal was successful (helper was called)
     assert_output --partial "successfully removed"
-
-    # Cleanup
-    if [[ "$(uname)" == "Darwin" ]]; then
-        rm -f "$HOME/Library/LaunchAgents/ccblocks.plist"
-    else
-        rm -f "$HOME/.config/systemd/user/ccblocks@.service"
-    fi
 }
 
 @test "uninstall handles missing scheduler gracefully" {
-    # The mock helper will be called even if config doesn't exist
+    # The helper is called even when no scheduler file exists, so runtime
+    # state (a bootstrapped agent, an enabled timer) still gets cleaned up
     run bash -c "echo 'y' | \"$SCRIPT\""
     assert_success
-    # Should complete successfully even if scheduler is missing
+    assert_output --partial "No "
+    assert_output --partial "found"
 }
 
 # Log creation tests

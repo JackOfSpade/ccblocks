@@ -12,7 +12,6 @@ BOLD='\033[1m'
 NC='\033[0m' # No Colour
 
 # Project paths
-: "${CCBLOCKS_INSTALL:=${SCRIPT_DIR:-$(pwd)}}"
 : "${CCBLOCKS_CONFIG:=${HOME}/.config/ccblocks}"
 
 # Fixed polling interval for the LaunchAgent/systemd scheduler. Single
@@ -27,6 +26,16 @@ export CCBLOCKS_INTERVAL_SECONDS CCBLOCKS_INTERVAL_MINUTES
 # Utility helpers
 command_exists() {
 	command -v "$1" >/dev/null 2>&1
+}
+
+# Truthiness for env-var flags. Accepts the values Claude Code documents
+# for its own boolean env vars ("set to 1 or true"); anything else,
+# including unset and non-numeric junk, is false.
+is_flag_enabled() {
+	case "${1:-}" in
+	1 | true | TRUE | True) return 0 ;;
+	*) return 1 ;;
+	esac
 }
 
 # Timeout handling. Prefers timeout/gtimeout (GNU coreutils); falls back to
@@ -77,12 +86,14 @@ print_status() {
 	echo -e "${GREEN}[INFO]${NC} $1"
 }
 
+# Diagnostics go to stderr so they never contaminate a caller's
+# command substitution (e.g. the CLAUDE_BIN discovery in the daemon).
 print_error() {
-	echo -e "${RED}[ERROR]${NC} $1"
+	echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 print_warning() {
-	echo -e "${YELLOW}[WARNING]${NC} $1"
+	echo -e "${YELLOW}[WARNING]${NC} $1" >&2
 }
 
 print_header() {
@@ -169,6 +180,9 @@ json_bool_value() {
 		-e "s/.*\"$key\"[[:space:]]*:[[:space:]]*\(false\).*/\1/p"
 }
 
+# Refusal diagnostics all go to stderr: print_error writes there, so the
+# remediation lines below have to as well or a `2>/dev/null` / `>/dev/null`
+# caller sees only half of each message.
 require_subscription_auth() {
 	local claude_bin="${1:-claude}"
 	local forbidden_var
@@ -182,7 +196,7 @@ require_subscription_auth() {
 		if [ -n "${!forbidden_var:-}" ]; then
 			print_error "Refusing to trigger: $forbidden_var is set"
 			print_error "ccblocks only triggers Claude subscription auth users."
-			echo "Unset API/provider credentials before running ccblocks."
+			echo "Unset API/provider credentials before running ccblocks." >&2
 			log_to_system "Refused trigger because $forbidden_var is set"
 			return 1
 		fi
@@ -196,15 +210,13 @@ require_subscription_auth() {
 		CLAUDE_CODE_USE_BEDROCK \
 		CLAUDE_CODE_USE_VERTEX \
 		CLAUDE_CODE_USE_FOUNDRY; do
-		case "${!forbidden_flag:-}" in
-		1 | true | TRUE | True)
+		if is_flag_enabled "${!forbidden_flag:-}"; then
 			print_error "Refusing to trigger: $forbidden_flag is enabled"
 			print_error "ccblocks only triggers Claude subscription auth users."
-			echo "Unset API/provider credentials before running ccblocks."
+			echo "Unset API/provider credentials before running ccblocks." >&2
 			log_to_system "Refused trigger because $forbidden_flag is enabled"
 			return 1
-			;;
-		esac
+		fi
 	done
 
 	local auth_status=""
@@ -212,7 +224,7 @@ require_subscription_auth() {
 	auth_status=$(run_with_timeout 15 "$claude_bin" auth status --json 2>/dev/null) || auth_rc=$?
 	if [ "$auth_rc" -ne 0 ]; then
 		print_error "Claude subscription auth not available"
-		echo "Run: claude auth login"
+		echo "Run: claude auth login" >&2
 		log_to_system "Refused trigger because Claude auth status failed"
 		return 1
 	fi
@@ -224,7 +236,7 @@ require_subscription_auth() {
 
 	if [ "$logged_in" != "true" ]; then
 		print_error "Claude subscription auth not available"
-		echo "Run: claude auth login"
+		echo "Run: claude auth login" >&2
 		log_to_system "Refused trigger because Claude is not logged in"
 		return 1
 	fi
@@ -265,22 +277,29 @@ run_claude_subscription_trigger() {
 		"Reply exactly: OK"
 }
 
-# Get helper script path based on OS
-get_helper_script() {
-	local script_dir="${1:-}"
+# Resolve the daemon path a scheduler unit should invoke, given the lib
+# directory of the calling helper. Homebrew installs live under
+# /Cellar/ccblocks/VERSION/, a path brew deletes on the next upgrade, so
+# rewrite it to the version-independent opt/ symlink brew keeps current.
+# Usage: TRIGGER_SCRIPT="$(resolve_trigger_script "$SCRIPT_DIR")"
+resolve_trigger_script() {
+	local lib_dir="${1:-}"
+	local base_dir trigger_script brew_prefix relative_path
 
-	if [[ -z "$script_dir" ]]; then
-		print_error "get_helper_script: script_dir parameter required"
-		return 1
+	base_dir="$(cd "$lib_dir/.." && pwd)"
+	trigger_script="$base_dir/ccblocks-daemon.sh"
+	if [ ! -f "$trigger_script" ]; then
+		trigger_script="$base_dir/libexec/ccblocks-daemon.sh"
 	fi
 
-	if [[ "$OS_TYPE" == "Darwin" ]]; then
-		echo "$script_dir/lib/launchagent-helper.sh"
-	elif [[ "$OS_TYPE" == "Linux" ]]; then
-		echo "$script_dir/lib/systemd-helper.sh"
-	else
-		return 1
+	if [[ "$trigger_script" == */Cellar/ccblocks/* ]]; then
+		brew_prefix="${trigger_script%%/Cellar/ccblocks/*}"
+		relative_path="${trigger_script#"${brew_prefix}"/Cellar/ccblocks/}"
+		relative_path="${relative_path#*/}" # drop version component
+		trigger_script="$brew_prefix/opt/ccblocks/${relative_path}"
 	fi
+
+	printf '%s\n' "$trigger_script"
 }
 
 # Initialize OS-specific variables (sets HELPER, CONFIG_PATH, etc.)
@@ -294,7 +313,7 @@ init_os_vars() {
 	fi
 
 	# Ensure OS is detected
-	if [[ -z "$OS_TYPE" ]]; then
+	if [[ -z "${OS_TYPE:-}" ]]; then
 		print_error "init_os_vars: OS_TYPE not set. Call detect_os first."
 		return 1
 	fi
@@ -307,22 +326,13 @@ init_os_vars() {
 		export HELPER="$script_dir/lib/launchagent-helper.sh"
 		export CONFIG_PATH="$HOME/Library/LaunchAgents/ccblocks.plist"
 		export TIMER_PATH="" # no separate timer file on macOS
-		export LOAD_CMD="load"
-		export UNLOAD_CMD="unload"
 	elif [[ "$OS_TYPE" == "Linux" ]]; then
 		export HELPER="$script_dir/lib/systemd-helper.sh"
 		export CONFIG_PATH="$HOME/.config/systemd/user/ccblocks@.service"
 		export TIMER_PATH="$HOME/.config/systemd/user/ccblocks@.timer"
-		export LOAD_CMD="enable"
-		export UNLOAD_CMD="disable"
 	else
 		return 1
 	fi
 
 	return 0
 }
-
-# Export functions so they can be used in subshells if needed
-export -f print_status print_error print_warning print_header show_logo run_with_timeout log_to_system command_exists
-export -f install_err_trap handle_ccblocks_error
-export -f json_string_value json_bool_value require_subscription_auth run_claude_subscription_trigger

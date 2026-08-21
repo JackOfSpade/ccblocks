@@ -44,45 +44,45 @@ print_error() {
 	echo -e "${RED}✗${NC} $1"
 }
 
-# Count total scripts
-count_scripts() {
-	local script_count=0
-	# Count executables in bin/ (no extension) + helpers in lib/ (.sh extension)
-	local bin_count lib_count
-	bin_count=$(find "$BIN_DIR" -type f -perm "$PERM_FLAG" ! -name "*.log" | wc -l | tr -d ' ')
-	lib_count=$(find "$LIB_DIR" -name "*.sh" -type f | wc -l | tr -d ' ')
-	script_count=$((bin_count + lib_count))
-	echo "$script_count"
+# Every first-party runtime script, one absolute path per line: the bin/
+# subcommands, the lib/ helpers, the daemon, the dispatcher, and the repo-root
+# wrapper. Every count and the coverage table below is derived from this one
+# list, so a script that is not covered cannot quietly sit outside the report.
+collect_runtime_scripts() {
+	{
+		find "$BIN_DIR" -type f -perm "$PERM_FLAG" ! -name "*.log"
+		find "$LIB_DIR" -name "*.sh" -type f
+		printf '%s\n' \
+			"$RUNTIME_DIR/ccblocks-daemon.sh" \
+			"$RUNTIME_DIR/ccblocks" \
+			"$PROJECT_ROOT/ccblocks"
+	} | sort -u
 }
 
-# Count total lines of shell code
+# Concatenate every runtime script. Read as a while-loop rather than piped into
+# xargs because the checkout path may contain spaces.
+cat_runtime_scripts() {
+	local script
+	while IFS= read -r script; do
+		cat "$script"
+	done < <(collect_runtime_scripts)
+}
+
+# Count total scripts
+count_scripts() {
+	collect_runtime_scripts | wc -l | tr -d ' '
+}
+
+# Count total lines of shell code, excluding comments and blank lines
 count_lines() {
-	local line_count=0
-	# Count lines in bin/ executables and lib/ helpers, excluding comments and blank lines
-	line_count=$({
-		find "$BIN_DIR" -type f -perm "$PERM_FLAG" ! -name "*.log" -exec cat {} \;
-		find "$LIB_DIR" -name "*.sh" -type f -exec cat {} \;
-	} | grep -v '^\s*#' | grep -v '^\s*$' | wc -l | tr -d ' ')
-	echo "$line_count"
+	cat_runtime_scripts | grep -v '^\s*#' | grep -v '^\s*$' | wc -l | tr -d ' '
 }
 
 # Count total functions defined
 count_functions() {
-	local func_count=0
 	# Find function definitions (name() { or function name {)
-	func_count=$({
-		find "$BIN_DIR" -type f -perm "$PERM_FLAG" ! -name "*.log" -exec grep -h '^\s*[a-z_][a-z0-9_]*\s*()' {} \;
-		find "$LIB_DIR" -name "*.sh" -type f -exec grep -h '^\s*[a-z_][a-z0-9_]*\s*()' {} \;
-	} | sed 's/\s*().*$//' | sed 's/^\s*//' | sort -u | wc -l | tr -d ' ')
-	echo "$func_count"
-}
-
-# List all function names
-list_functions() {
-	{
-		find "$BIN_DIR" -type f -perm "$PERM_FLAG" ! -name "*.log" -exec grep -h '^\s*[a-z_][a-z0-9_]*\s*()' {} \;
-		find "$LIB_DIR" -name "*.sh" -type f -exec grep -h '^\s*[a-z_][a-z0-9_]*\s*()' {} \;
-	} | sed 's/\s*().*$//' | sed 's/^\s*//' | sort -u
+	cat_runtime_scripts | grep '^\s*[a-z_][a-z0-9_]*\s*()' |
+		sed 's/\s*().*$//' | sed 's/^\s*//' | sort -u | wc -l | tr -d ' '
 }
 
 # Count test files
@@ -101,7 +101,7 @@ count_tests() {
 
 # Analyze which scripts have tests
 analyze_script_coverage() {
-	local script_name
+	local script_name display_name
 	local covered=0
 	local total=0
 
@@ -109,9 +109,9 @@ analyze_script_coverage() {
 	print_header "Script Test Coverage"
 	echo "===================="
 
-	# Analyze bin/ executables (no extension)
 	while IFS= read -r script; do
 		script_name=$(basename "$script")
+		display_name="${script#"$PROJECT_ROOT"/}"
 		total=$((total + 1))
 
 		# A script is "covered" if some .bats file actually references it
@@ -135,11 +135,11 @@ analyze_script_coverage() {
 
 		if [ -n "$covering_tests" ]; then
 			covered=$((covered + 1))
-			print_success "$script_name ($covering_tests)"
+			print_success "$display_name ($covering_tests)"
 		else
-			print_warning "$script_name (no test file)"
+			print_warning "$display_name (no test file)"
 		fi
-	done < <(find "$BIN_DIR" -type f -perm "$PERM_FLAG" ! -name "*.log" | sort)
+	done < <(collect_runtime_scripts)
 
 	echo ""
 	local coverage_pct=0
@@ -214,7 +214,7 @@ main() {
 	echo ""
 	print_header "Next Steps"
 	echo "=========="
-	echo "  1. Maintain >80% script coverage (all bin/* executables have tests)"
+	echo "  1. Maintain >80% script coverage (every runtime script has tests)"
 	echo "  2. Add integration tests for lib/*.sh helper functions"
 	echo "  3. Increase test cases to >10 per script for complex scripts"
 	echo "  4. Run 'make test' regularly to verify coverage"

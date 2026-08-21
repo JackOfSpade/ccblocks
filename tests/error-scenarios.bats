@@ -10,17 +10,23 @@ setup() {
 }
 
 teardown() {
-    # Clean up symlink created for lib sourcing
-    if [ -L "${TEST_TEMP_DIR}/../lib" ]; then
-        rm -f "${TEST_TEMP_DIR}/../lib"
-    fi
     teardown_test_dir
+}
+
+# Probe scripts source "$SCRIPT_DIR/../lib/common.sh". Generating them under
+# ${TEST_TEMP_DIR}/work/ keeps that ".." inside the per-test sandbox, so the
+# symlink below is created and torn down with the sandbox rather than in the
+# shared system temp directory.
+setup_probe_dir() {
+    mkdir -p "${TEST_TEMP_DIR}/work"
+    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/lib"
 }
 
 # OS detection error tests
 @test "common.sh detect_os fails on unsupported OS" {
+    setup_probe_dir
     # Create a test script that sources common.sh
-    cat > "${TEST_TEMP_DIR}/test_os_detect.sh" << 'EOF'
+    cat > "${TEST_TEMP_DIR}/work/test_os_detect.sh" << 'EOF'
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -33,20 +39,19 @@ export -f uname
 source "${SCRIPT_DIR}/../lib/common.sh"
 detect_os
 EOF
-    chmod +x "${TEST_TEMP_DIR}/test_os_detect.sh"
+    chmod +x "${TEST_TEMP_DIR}/work/test_os_detect.sh"
 
-    # Link to lib directory for sourcing
-    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
-
-    run "${TEST_TEMP_DIR}/test_os_detect.sh"
+    run "${TEST_TEMP_DIR}/work/test_os_detect.sh"
     assert_failure
     assert_output --partial "Unsupported OS"
 }
 
 # Helper initialization error tests
 @test "common.sh init_os_vars fails when OS_TYPE not set" {
-    cat > "${TEST_TEMP_DIR}/test_init_no_os.sh" << 'EOF'
+    setup_probe_dir
+    cat > "${TEST_TEMP_DIR}/work/test_init_no_os.sh" << 'EOF'
 #!/usr/bin/env bash
+set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
 
@@ -54,17 +59,16 @@ source "${SCRIPT_DIR}/../lib/common.sh"
 unset OS_TYPE
 init_os_vars "$SCRIPT_DIR"
 EOF
-    chmod +x "${TEST_TEMP_DIR}/test_init_no_os.sh"
+    chmod +x "${TEST_TEMP_DIR}/work/test_init_no_os.sh"
 
-    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
-
-    run "${TEST_TEMP_DIR}/test_init_no_os.sh"
+    run "${TEST_TEMP_DIR}/work/test_init_no_os.sh"
     assert_failure
     assert_output --partial "OS_TYPE not set"
 }
 
 @test "common.sh init_os_vars fails when script_dir parameter missing" {
-    cat > "${TEST_TEMP_DIR}/test_init_no_param.sh" << 'EOF'
+    setup_probe_dir
+    cat > "${TEST_TEMP_DIR}/work/test_init_no_param.sh" << 'EOF'
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
@@ -73,18 +77,17 @@ source "${SCRIPT_DIR}/../lib/common.sh"
 export OS_TYPE="Darwin"
 init_os_vars
 EOF
-    chmod +x "${TEST_TEMP_DIR}/test_init_no_param.sh"
+    chmod +x "${TEST_TEMP_DIR}/work/test_init_no_param.sh"
 
-    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
-
-    run "${TEST_TEMP_DIR}/test_init_no_param.sh"
+    run "${TEST_TEMP_DIR}/work/test_init_no_param.sh"
     assert_failure
     assert_output --partial "script_dir parameter required"
 }
 
 # Timeout fallback tests
 @test "common.sh run_with_timeout falls back to perl when timeout unavailable" {
-    cat > "${TEST_TEMP_DIR}/test_timeout_perl.sh" << 'EOF'
+    setup_probe_dir
+    cat > "${TEST_TEMP_DIR}/work/test_timeout_perl.sh" << 'EOF'
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
@@ -99,23 +102,19 @@ command_exists() {
 }
 export -f command_exists
 
-# Ensure TIMEOUT_CMD is empty
-TIMEOUT_CMD=""
-
 # Test that perl fallback works
 run_with_timeout 1 echo "perl fallback works"
 EOF
-    chmod +x "${TEST_TEMP_DIR}/test_timeout_perl.sh"
+    chmod +x "${TEST_TEMP_DIR}/work/test_timeout_perl.sh"
 
-    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
-
-    run "${TEST_TEMP_DIR}/test_timeout_perl.sh"
+    run "${TEST_TEMP_DIR}/work/test_timeout_perl.sh"
     assert_success
     assert_output --partial "perl fallback works"
 }
 
 @test "common.sh run_with_timeout falls back to python3 when perl unavailable" {
-    cat > "${TEST_TEMP_DIR}/test_timeout_python.sh" << 'EOF'
+    setup_probe_dir
+    cat > "${TEST_TEMP_DIR}/work/test_timeout_python.sh" << 'EOF'
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
@@ -130,23 +129,19 @@ command_exists() {
 }
 export -f command_exists
 
-# Ensure TIMEOUT_CMD is empty
-TIMEOUT_CMD=""
-
 # Test that python3 fallback works
 run_with_timeout 1 echo "python3 fallback works"
 EOF
-    chmod +x "${TEST_TEMP_DIR}/test_timeout_python.sh"
+    chmod +x "${TEST_TEMP_DIR}/work/test_timeout_python.sh"
 
-    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
-
-    run "${TEST_TEMP_DIR}/test_timeout_python.sh"
+    run "${TEST_TEMP_DIR}/work/test_timeout_python.sh"
     assert_success
     assert_output --partial "python3 fallback works"
 }
 
 @test "common.sh run_with_timeout runs without timeout when no utility available" {
-    cat > "${TEST_TEMP_DIR}/test_timeout_none.sh" << 'EOF'
+    setup_probe_dir
+    cat > "${TEST_TEMP_DIR}/work/test_timeout_none.sh" << 'EOF'
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
@@ -160,24 +155,20 @@ command_exists() {
 }
 export -f command_exists
 
-# Ensure TIMEOUT_CMD is empty
-TIMEOUT_CMD=""
-
 # Test that command runs without timeout
 run_with_timeout 1 echo "no timeout available"
 EOF
-    chmod +x "${TEST_TEMP_DIR}/test_timeout_none.sh"
+    chmod +x "${TEST_TEMP_DIR}/work/test_timeout_none.sh"
 
-    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
-
-    run "${TEST_TEMP_DIR}/test_timeout_none.sh"
+    run "${TEST_TEMP_DIR}/work/test_timeout_none.sh"
     assert_success
     assert_output --partial "no timeout available"
     assert_output --partial "No timeout utility available"
 }
 
 @test "common.sh run_with_timeout perl fallback actually kills a hung command" {
-    cat > "${TEST_TEMP_DIR}/test_timeout_perl_enforce.sh" << 'EOF'
+    setup_probe_dir
+    cat > "${TEST_TEMP_DIR}/work/test_timeout_perl_enforce.sh" << 'EOF'
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
@@ -199,16 +190,15 @@ elapsed=$(( $(date +%s) - start ))
 echo "rc=$rc elapsed=$elapsed"
 [ "$rc" -ne 0 ] && [ "$elapsed" -lt 4 ]
 EOF
-    chmod +x "${TEST_TEMP_DIR}/test_timeout_perl_enforce.sh"
+    chmod +x "${TEST_TEMP_DIR}/work/test_timeout_perl_enforce.sh"
 
-    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
-
-    run "${TEST_TEMP_DIR}/test_timeout_perl_enforce.sh"
+    run "${TEST_TEMP_DIR}/work/test_timeout_perl_enforce.sh"
     assert_success
 }
 
 @test "common.sh run_with_timeout python3 fallback actually kills a hung command" {
-    cat > "${TEST_TEMP_DIR}/test_timeout_python_enforce.sh" << 'EOF'
+    setup_probe_dir
+    cat > "${TEST_TEMP_DIR}/work/test_timeout_python_enforce.sh" << 'EOF'
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
@@ -230,11 +220,9 @@ elapsed=$(( $(date +%s) - start ))
 echo "rc=$rc elapsed=$elapsed"
 [ "$rc" -ne 0 ] && [ "$elapsed" -lt 4 ]
 EOF
-    chmod +x "${TEST_TEMP_DIR}/test_timeout_python_enforce.sh"
+    chmod +x "${TEST_TEMP_DIR}/work/test_timeout_python_enforce.sh"
 
-    ln -s "${PROJECT_ROOT}/libexec/lib" "${TEST_TEMP_DIR}/../lib" 2>/dev/null || true
-
-    run "${TEST_TEMP_DIR}/test_timeout_python_enforce.sh"
+    run "${TEST_TEMP_DIR}/work/test_timeout_python_enforce.sh"
     assert_success
 }
 
@@ -252,7 +240,9 @@ EOF
 
     run "${MOCK_LIBEXEC}/bin/status.sh"
     assert_success
-    # Should handle empty file gracefully
+    # The section still renders, but with no timestamp to report
+    assert_output --partial "Last Activity"
+    refute_line --regexp "Last triggered: .+"
 }
 
 # Command not found scenarios
@@ -280,13 +270,67 @@ EOF
     refute_output --partial "Claude CLI found"
 }
 
+# Any test that actually EXECUTES the installer must go through this.
+# setup.sh treats an EOF stdin as the documented default-yes, so a real run
+# with the developer's HOME and the real launchctl/systemctl on PATH would
+# install a live LaunchAgent/timer on the machine running the suite. Sandbox
+# HOME, neutralise the scheduler managers, and run a throwaway copy of
+# libexec so mocking its helper never touches the repository.
+sandbox_setup_script() {
+    export HOME="${TEST_TEMP_DIR}/home"
+    mkdir -p "$HOME"
+    mock_command "launchctl" 'exit 0'
+    mock_command "systemctl" 'exit 0'
+
+    MOCK_LIBEXEC="${TEST_TEMP_DIR}/libexec"
+    cp -r "${PROJECT_ROOT}/libexec" "$MOCK_LIBEXEC"
+    SETUP_SCRIPT="${MOCK_LIBEXEC}/bin/setup.sh"
+}
+
+# Replace the sandboxed copy's platform helper with a stub that accepts the
+# two commands install_scheduler issues, so a confirmed run can reach the end
+# of the installer without touching any real scheduler.
+create_mock_setup_helper() {
+    local helper_dir="${MOCK_LIBEXEC}/lib"
+    local helper_name
+
+    if [[ "$(uname)" == "Darwin" ]]; then
+        helper_name="launchagent-helper.sh"
+    else
+        helper_name="systemd-helper.sh"
+    fi
+
+    cat > "${helper_dir}/${helper_name}" << 'EOF'
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
+
+case "$1" in
+    create)
+        echo "Mock: Created scheduler config"
+        exit 0
+        ;;
+    reload)
+        echo "Mock: Reloaded scheduler"
+        exit 0
+        ;;
+    *)
+        echo "Mock helper: Unknown command $1" >&2
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "${helper_dir}/${helper_name}"
+}
+
 @test "setup refuses API credentials before Claude test request" {
     export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
     mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
     calls_file="${TEST_TEMP_DIR}/claude-calls.log"
     mock_claude_call_recorder "$calls_file"
 
-    ANTHROPIC_API_KEY="sk-ant-test" run "${PROJECT_ROOT}/libexec/bin/setup.sh"
+    ANTHROPIC_API_KEY="sk-ant-test" run "$SETUP_SCRIPT"
     assert_failure
     assert_output --partial "subscription auth"
     refute [ -f "$calls_file" ]
@@ -295,11 +339,12 @@ EOF
 @test "setup continues with a warning when Claude reports the session limit" {
     export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
     mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
     mock_claude_with_auth "$(claude_auth_json)" "
 echo \"You've hit your session limit · resets 1:40am (Europe/London)\" >&2
 exit 1"
 
-    run bash -c "printf 'n\n' | '${PROJECT_ROOT}/libexec/bin/setup.sh'"
+    run bash -c "printf 'n\n' | '${SETUP_SCRIPT}'"
     assert_success
     assert_output --partial "Setup will continue"
     assert_output --partial "Setup cancelled"
@@ -308,26 +353,76 @@ exit 1"
 @test "setup tests Claude with haiku print-mode trigger" {
     export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
     mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
     args_file="${TEST_TEMP_DIR}/claude-args.log"
     export CCBLOCKS_CLAUDE_ARGS_LOG="$args_file"
     export CCBLOCKS_MODEL="sonnet"
     export CCBLOCKS_PROMPT="Write a detailed essay about block scheduling"
     mock_claude_success
 
-    run bash -c "printf 'n\n' | '${PROJECT_ROOT}/libexec/bin/setup.sh'"
+    run bash -c "printf 'n\n' | '${SETUP_SCRIPT}'"
     assert_success
     assert_output --partial "Setup cancelled"
 
     run cat "$args_file"
-    assert_output --partial "-p --safe-mode --model haiku"
-    assert_output --partial "--max-turns 1"
-    assert_output --partial "Reply exactly: OK"
-    refute_output --partial "--model sonnet"
+    assert_line '<-p>'
+    assert_line '<--safe-mode>'
+    assert_line '<--model>'
+    assert_line '<haiku>'
+    assert_line '<--max-turns>'
+    assert_line '<1>'
+    assert_line '<--tools>'
+    assert_line '<>'
+    assert_line '<--output-format>'
+    assert_line '<text>'
+    assert_line '<Reply exactly: OK>'
+    refute_line '<sonnet>'
     refute_output --partial "detailed essay"
+
+    # Per-line assertions cannot see adjacency: swapping the model for
+    # `--model opus --fallback-model haiku` would still satisfy every line
+    # above. Collapse the log and pin the flag to its own value.
+    run bash -c "tr -d '\n' < '$args_file'"
+    assert_output --partial '<--model><haiku>'
+}
+
+@test "setup treats a closed stdin as the documented default-yes and installs" {
+    export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
+    mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
+    create_mock_setup_helper
+    mock_claude_success
+
+    # Deliberate behaviour: `read` fails at EOF, and the empty answer that
+    # leaves behind is not a "no", so a non-interactive run proceeds. This
+    # is what makes the sandbox above mandatory for every installer test.
+    run bash -c "'${SETUP_SCRIPT}' </dev/null"
+    assert_success
+    assert_output --partial "Installing"
+    assert_output --partial "Setup Complete"
+    refute_output --partial "Setup cancelled"
+}
+
+@test "setup honours an unterminated 'n' rather than defaulting to yes" {
+    export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
+    mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
+    create_mock_setup_helper
+    mock_claude_success
+
+    # `printf 'n'` with no trailing newline: `read` returns non-zero at EOF
+    # but has ALREADY assigned "n". Discarding that with `|| confirm=""`
+    # would turn this explicit decline into the default-yes above and
+    # install a scheduler the user just refused.
+    run bash -c "printf 'n' | '${SETUP_SCRIPT}'"
+    assert_success
+    assert_output --partial "Setup cancelled"
+    refute_output --partial "Installing"
+    refute_output --partial "Setup Complete"
 }
 
 # Invalid input scenarios
-@test "ccblocks shows error for empty command" {
+@test "ccblocks shows usage for empty command" {
     run "${PROJECT_ROOT}/ccblocks" ""
     assert_success
     # Empty command should show help
@@ -401,6 +496,13 @@ EOF
 @test "uninstall handles config directory with special characters in filenames" {
     export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
     mkdir -p "$CCBLOCKS_CONFIG"
+
+    # Sandbox HOME and the scheduler managers so uninstall.sh's
+    # fallback_cleanup can never touch the developer's real scheduler.
+    export HOME="${TEST_TEMP_DIR}/home"
+    mkdir -p "$HOME"
+    mock_command "launchctl" 'exit 0'
+    mock_command "systemctl" 'exit 0'
 
     # Create files with special characters
     touch "$CCBLOCKS_CONFIG/file with spaces.conf"

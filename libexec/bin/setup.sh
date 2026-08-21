@@ -108,9 +108,10 @@ show_completion() {
 show_usage() {
 	echo "ccblocks Setup"
 	echo ""
-	echo "Usage: ccblocks setup"
+	echo "Usage: ccblocks setup [options]"
 	echo ""
 	echo "Options:"
+	echo "  -y, --yes     # Skip the confirmation prompt"
 	echo "  -h, --help    # Show this help message"
 	echo ""
 	echo "Runs the interactive installer: checks the Claude CLI and installs"
@@ -119,12 +120,25 @@ show_usage() {
 
 # Main setup flow
 main() {
-	case "${1:-}" in
-	-h | --help)
-		show_usage
-		exit 0
-		;;
-	esac
+	local assume_yes=false
+
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+		-y | --yes)
+			assume_yes=true
+			shift
+			;;
+		-h | --help)
+			show_usage
+			exit 0
+			;;
+		*)
+			print_error "Unknown option: $1"
+			show_usage
+			exit 1
+			;;
+		esac
+	done
 
 	print_header "[CCBLOCKS] ccblocks Setup"
 	show_logo
@@ -135,14 +149,22 @@ main() {
 	check_current_block
 
 	# Confirm before proceeding
-	echo ""
-	print_warning "Ready to install ccblocks (triggers every ${CCBLOCKS_INTERVAL_MINUTES} minutes)"
-	read -r -p "Proceed with installation? [Y/n]: " confirm
+	if [ "$assume_yes" = false ]; then
+		echo ""
+		print_warning "Ready to install ccblocks (triggers every ${CCBLOCKS_INTERVAL_MINUTES} minutes)"
+		# A closed/EOF stdin must fall through to the documented
+		# default-yes rather than tripping the ERR trap. `read` still
+		# assigns what it consumed before hitting EOF (empty on an
+		# immediate EOF), so `|| true` is set -u safe AND preserves an
+		# unterminated answer like `printf n`; `|| confirm=""` would
+		# discard that "no" and install anyway.
+		read -r -p "Proceed with installation? [Y/n]: " confirm || true
 
-	# Default to yes if empty, or if user explicitly said no
-	if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
-		print_status "Setup cancelled"
-		exit 0
+		# Default to yes if empty, or if user explicitly said no
+		if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
+			print_status "Setup cancelled"
+			exit 0
+		fi
 	fi
 
 	# Installation
