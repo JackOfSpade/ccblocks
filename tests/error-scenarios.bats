@@ -264,15 +264,15 @@ EOF
 }
 
 @test "setup shows help with --help instead of running the installer" {
-    run "${PROJECT_ROOT}/libexec/bin/setup.sh" --help
+    run "${PROJECT_ROOT}/libexec/bin/setup.sh" --help </dev/null
     assert_success
     assert_output --partial "Usage: ccblocks setup"
     refute_output --partial "Claude CLI found"
 }
 
 # Any test that actually EXECUTES the installer must go through this.
-# setup.sh treats an EOF stdin as the documented default-yes, so a real run
-# with the developer's HOME and the real launchctl/systemctl on PATH would
+# A pressed-Enter (empty) answer is the documented default-yes, so a real run
+# with the developer's HOME and the real launchctl/systemctl on PATH could
 # install a live LaunchAgent/timer on the machine running the suite. Sandbox
 # HOME, neutralise the scheduler managers, and run a throwaway copy of
 # libexec so mocking its helper never touches the repository.
@@ -290,8 +290,13 @@ sandbox_setup_script() {
 # Replace the sandboxed copy's platform helper with a stub that accepts the
 # two commands install_scheduler issues, so a confirmed run can reach the end
 # of the installer without touching any real scheduler.
+#
+# Pass a path as $1 to make the stub append every invocation to that file
+# (mirroring mock_claude_call_recorder): the file's very absence is then proof
+# the installer never ran, which output assertions alone cannot establish.
 create_mock_setup_helper() {
     local helper_dir="${MOCK_LIBEXEC}/lib"
+    local calls_file="${1:-}"
     local helper_name
 
     if [[ "$(uname)" == "Darwin" ]]; then
@@ -300,12 +305,17 @@ create_mock_setup_helper() {
         helper_name="systemd-helper.sh"
     fi
 
-    cat > "${helper_dir}/${helper_name}" << 'EOF'
+    cat > "${helper_dir}/${helper_name}" << EOF
 #!/usr/bin/env bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/common.sh"
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+source "\$SCRIPT_DIR/common.sh"
 
-case "$1" in
+HELPER_CALLS_FILE="${calls_file}"
+if [ -n "\$HELPER_CALLS_FILE" ]; then
+    printf '%s\n' "\$*" >> "\$HELPER_CALLS_FILE"
+fi
+
+case "\$1" in
     create)
         echo "Mock: Created scheduler config"
         exit 0
@@ -315,7 +325,7 @@ case "$1" in
         exit 0
         ;;
     *)
-        echo "Mock helper: Unknown command $1" >&2
+        echo "Mock helper: Unknown command \$1" >&2
         exit 1
         ;;
 esac
@@ -330,7 +340,7 @@ EOF
     calls_file="${TEST_TEMP_DIR}/claude-calls.log"
     mock_claude_call_recorder "$calls_file"
 
-    ANTHROPIC_API_KEY="sk-ant-test" run "$SETUP_SCRIPT"
+    ANTHROPIC_API_KEY="sk-ant-test" run "$SETUP_SCRIPT" </dev/null
     assert_failure
     assert_output --partial "subscription auth"
     refute [ -f "$calls_file" ]
@@ -386,21 +396,112 @@ exit 1"
     assert_output --partial '<--model><haiku>'
 }
 
-@test "setup treats a closed stdin as the documented default-yes and installs" {
+@test "setup treats a closed stdin as a cancellation, not as consent" {
     export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
     mkdir -p "$CCBLOCKS_CONFIG"
     sandbox_setup_script
-    create_mock_setup_helper
+    helper_calls="${TEST_TEMP_DIR}/setup-helper-calls.log"
+    create_mock_setup_helper "$helper_calls"
     mock_claude_success
 
-    # Deliberate behaviour: `read` fails at EOF, and the empty answer that
-    # leaves behind is not a "no", so a non-interactive run proceeds. This
-    # is what makes the sandbox above mandatory for every installer test.
+    # An immediate EOF means nobody was there to answer at all - the empty
+    # string it leaves behind is the ABSENCE of an answer, not the pressed
+    # Enter that the documented default-yes stands for. Consent has to come
+    # from a human or from --yes, so this must cancel.
     run bash -c "'${SETUP_SCRIPT}' </dev/null"
+    # And it must not report success: "nobody could answer" is an environment
+    # condition, not a user decision, so a provisioning script that installed
+    # nothing has to be able to see that in the exit status.
+    assert_failure
+    [ "$status" -eq 2 ]
+    assert_output --partial "Setup cancelled (no answer on stdin - use --yes to install non-interactively)"
+    refute_output --partial "Installing"
+    refute_output --partial "Setup Complete"
+    # The installer never even reached the scheduler helper.
+    refute [ -f "$helper_calls" ]
+}
+
+@test "setup treats a bare newline as the documented default-yes and installs" {
+    export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
+    mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
+    helper_calls="${TEST_TEMP_DIR}/setup-helper-calls.log"
+    create_mock_setup_helper "$helper_calls"
+    mock_claude_success
+
+    # The other half of the contract the EOF guard has to leave intact: a
+    # pressed Enter IS an answer (`read` succeeds, leaving confirm empty) and
+    # the prompt is documented [Y/n], so it must install. Collapsing the guard
+    # to `[ -z "$confirm" ]` would silently turn Enter into a cancellation.
+    run bash -c "printf '\n' | '${SETUP_SCRIPT}'"
     assert_success
     assert_output --partial "Installing"
     assert_output --partial "Setup Complete"
+    refute_output --partial "no answer on stdin"
+    # Output alone cannot prove the scheduler was really touched; the
+    # recorder file existing does.
+    assert [ -f "$helper_calls" ]
+}
+
+@test "setup installs non-interactively with --yes" {
+    export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
+    mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
+    helper_calls="${TEST_TEMP_DIR}/setup-helper-calls.log"
+    create_mock_setup_helper "$helper_calls"
+    mock_claude_success
+
+    # --yes is the documented non-interactive path, and the closed-stdin guard
+    # above names it in the exit-2 message it prints. So run it exactly the way
+    # a provisioning script does - flag set, stdin detached - and require a real
+    # install: a broken `-y | --yes)` arm would fall through to the prompt, hit
+    # EOF, and tell someone who just passed --yes to use --yes, with rc 2.
+    run "$SETUP_SCRIPT" --yes </dev/null
+    assert_success
+    assert_output --partial "Setup Complete"
+    refute_output --partial "no answer on stdin"
+    # Output alone cannot prove the scheduler was really touched; the recorder
+    # file existing does.
+    assert [ -f "$helper_calls" ]
+}
+
+@test "setup installs non-interactively with -y" {
+    export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
+    mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
+    helper_calls="${TEST_TEMP_DIR}/setup-helper-calls.log"
+    create_mock_setup_helper "$helper_calls"
+    mock_claude_success
+
+    # The short form shares one case arm with --yes today, but it is what the
+    # README tells scripts to type, so pin it independently.
+    run "$SETUP_SCRIPT" -y </dev/null
+    assert_success
+    assert_output --partial "Setup Complete"
+    refute_output --partial "no answer on stdin"
+    assert [ -f "$helper_calls" ]
+}
+
+@test "setup honours an unterminated 'y' and installs" {
+    export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
+    mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
+    helper_calls="${TEST_TEMP_DIR}/setup-helper-calls.log"
+    create_mock_setup_helper "$helper_calls"
+    mock_claude_success
+
+    # The mirror image of the unterminated 'n' test below: a TTY user who types
+    # "y" and then Ctrl-D leaves `read` non-zero with confirm="y". A guard that
+    # ignores the answer it was handed (e.g. `[[ ! "$confirm" =~ ^[Nn] ]]`
+    # instead of `[ -z "$confirm" ]`) would cancel that explicit consent, and
+    # the 'n' test would never notice.
+    run bash -c "printf 'y' | '${SETUP_SCRIPT}'"
+    assert_success
+    assert_output --partial "Installing"
+    assert_output --partial "Setup Complete"
+    refute_output --partial "no answer on stdin"
     refute_output --partial "Setup cancelled"
+    assert [ -f "$helper_calls" ]
 }
 
 @test "setup honours an unterminated 'n' rather than defaulting to yes" {
@@ -412,13 +513,48 @@ exit 1"
 
     # `printf 'n'` with no trailing newline: `read` returns non-zero at EOF
     # but has ALREADY assigned "n". Discarding that with `|| confirm=""`
-    # would turn this explicit decline into the default-yes above and
-    # install a scheduler the user just refused.
+    # would turn this explicit decline into the default-yes and install a
+    # scheduler the user just refused; treating it as the no-answer EOF
+    # above would cancel for the wrong reason.
     run bash -c "printf 'n' | '${SETUP_SCRIPT}'"
     assert_success
     assert_output --partial "Setup cancelled"
+    refute_output --partial "no answer on stdin"
     refute_output --partial "Installing"
     refute_output --partial "Setup Complete"
+}
+
+@test "setup keeps its own stdin when the Claude pre-flight reads stdin" {
+    export CCBLOCKS_CONFIG="${TEST_TEMP_DIR}/.config/ccblocks"
+    mkdir -p "$CCBLOCKS_CONFIG"
+    sandbox_setup_script
+    helper_calls="${TEST_TEMP_DIR}/setup-helper-calls.log"
+    create_mock_setup_helper "$helper_calls"
+
+    # The real `claude` CLI reads stdin. This mock does too (`cat >/dev/null`
+    # on every invocation, auth check included), which is exactly what the
+    # other claude mocks never do - and why the suite could not catch the
+    # live bug where the pre-flight ate the piped answer and the prompt then
+    # saw EOF. common.sh redirects both claude calls from /dev/null, so the
+    # "n" below must still reach the prompt.
+    mock_command "claude" "
+cat >/dev/null
+if [ \"\$1\" = \"auth\" ] && [ \"\$2\" = \"status\" ]; then
+    echo '$(claude_auth_json)'
+    exit 0
+fi
+echo 'Claude mock: Success'
+exit 0"
+
+    run bash -c "printf 'n\n' | '${SETUP_SCRIPT}'"
+    assert_success
+    assert_output --partial "Setup cancelled"
+    # A drained stdin would still cancel now, but for the wrong reason: the
+    # no-answer EOF message proves the answer was eaten before the prompt.
+    refute_output --partial "no answer on stdin"
+    refute_output --partial "Installing"
+    refute_output --partial "Setup Complete"
+    refute [ -f "$helper_calls" ]
 }
 
 # Invalid input scenarios
@@ -511,8 +647,10 @@ EOF
 
     create_mock_helper_for_uninstall
 
-    # Run with force mode to skip prompts
-    run "${MOCK_LIBEXEC}/bin/uninstall.sh" --force
+    # Run with force mode to skip prompts. The explicit `</dev/null` keeps the
+    # run deterministic: without it bats hands the script the developer's
+    # terminal, so a --force regression would hang the suite on a TTY.
+    run "${MOCK_LIBEXEC}/bin/uninstall.sh" --force </dev/null
 
     # Should complete successfully
     assert_success

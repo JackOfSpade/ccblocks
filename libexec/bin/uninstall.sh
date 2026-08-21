@@ -165,9 +165,11 @@ show_config_contents() {
 	echo "   Location: $CCBLOCKS_CONFIG"
 	echo ""
 
-	# Count files
+	# Count entries. `! -type d` rather than `-type f` so symlinks (and any
+	# other non-directory entry) count as content: a directory holding only
+	# symlinks is not empty, and must not be reported as such.
 	local file_count
-	file_count=$(find "$CCBLOCKS_CONFIG" -type f 2>/dev/null | wc -l | tr -d ' ')
+	file_count=$(find "$CCBLOCKS_CONFIG" ! -type d 2>/dev/null | wc -l | tr -d ' ')
 
 	if [ "$file_count" -eq 0 ]; then
 		echo "   Contents: Empty directory"
@@ -176,8 +178,10 @@ show_config_contents() {
 
 	echo "   Contents ($file_count file$([ "$file_count" -ne 1 ] && echo "s")):"
 
-	# Show files with relative paths
-	find "$CCBLOCKS_CONFIG" -type f 2>/dev/null | while read -r file; do
+	# Show entries with relative paths. `stat` here does not dereference
+	# (macOS needs -L, GNU needs --dereference), so a symlink reports its own
+	# size and a dangling one still reports rather than failing.
+	find "$CCBLOCKS_CONFIG" ! -type d 2>/dev/null | while read -r file; do
 		local rel_path="${file#"$CCBLOCKS_CONFIG"/}"
 		local size
 		if [[ "$OS_TYPE" == "Darwin" ]]; then
@@ -208,9 +212,14 @@ prompt_config_removal() {
 		return 0
 	fi
 
-	# Count files to decide if it's worth asking
+	# Decide whether to ask by counting ANY entry, not just non-directories:
+	# counting only `-type f` made a directory of symlinks look empty, and
+	# `! -type d` did the same for one holding only subdirectories. Either
+	# way the short-circuit below rm -rf'd the user's config without ever
+	# prompting. (show_config_contents still lists with `! -type d` - it
+	# reports sizes, which a directory has nothing meaningful to contribute.)
 	local file_count
-	file_count=$(find "$CCBLOCKS_CONFIG" -type f 2>/dev/null | wc -l | tr -d ' ')
+	file_count=$(find "$CCBLOCKS_CONFIG" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')
 
 	if [ "$file_count" -eq 0 ]; then
 		# Empty directory, just remove it
@@ -228,9 +237,22 @@ prompt_config_removal() {
 	echo "If you plan to reinstall ccblocks later, you may want to keep these files."
 	echo ""
 	# `read` assigns what it consumed before EOF (empty on an immediate
-	# EOF), so `|| true` stays set -u safe while preserving an
-	# unterminated answer like `printf n`.
-	read -r -p "Remove configuration directory? [Y/n]: " confirm || true
+	# EOF) yet still returns non-zero, so track the status separately
+	# instead of letting it erase an unterminated answer like `printf n`.
+	local confirm=""
+	local answered=true
+	read -r -p "Remove configuration directory? [Y/n]: " confirm || answered=false
+
+	# EOF with no answer at all: nobody is there to consent to deleting
+	# the user's configuration, so take the safe outcome and keep it.
+	# --force is the supported non-interactive path.
+	if [ "$answered" = false ] && [ -z "$confirm" ]; then
+		print_warning "Configuration preserved: no answer on stdin (use --force to remove it non-interactively)"
+		echo "Location: $CCBLOCKS_CONFIG"
+		echo "You can manually remove it later with: rm -rf $CCBLOCKS_CONFIG"
+		echo ""
+		return 0
+	fi
 
 	if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
 		print_status "Configuration preserved at: $CCBLOCKS_CONFIG"
@@ -420,9 +442,30 @@ main() {
 	if [ "$force" = false ]; then
 		echo ""
 		print_warning "This will remove the ccblocks $SCHEDULER_NAME"
-		# See prompt_config_removal: `|| true` keeps set -u happy without
-		# throwing away a partial (unterminated) answer.
-		read -r -p "Proceed with uninstallation? [Y/n]: " confirm || true
+		# See prompt_config_removal: `read` fails at EOF even after it
+		# assigned a partial (unterminated) answer, so keep the status
+		# and the answer separately.
+		local confirm=""
+		local answered=true
+		read -r -p "Proceed with uninstallation? [Y/n]: " confirm || answered=false
+
+		# EOF with no answer at all: nobody is there to consent. --force
+		# is the supported non-interactive path.
+		#
+		# Exit 2, not 0: declining is a user decision, but "nobody could
+		# answer" is an environment condition the caller asked this tool to
+		# resolve, so a CI step that uninstalled nothing must not report
+		# success. (The config prompt below deliberately keeps returning 0:
+		# preserving the config and finishing the uninstall is correct
+		# there.)
+		#
+		# print_warning, not print_status: the audience for a non-zero exit
+		# is precisely the caller that discards stdout and keeps stderr, so
+		# the "--force" remediation has to be on stderr to reach it.
+		if [ "$answered" = false ] && [ -z "$confirm" ]; then
+			print_warning "Uninstallation cancelled (no answer on stdin - use --force to uninstall non-interactively)"
+			exit 2
+		fi
 
 		if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
 			print_status "Uninstallation cancelled"

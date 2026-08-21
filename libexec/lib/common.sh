@@ -221,7 +221,10 @@ require_subscription_auth() {
 
 	local auth_status=""
 	local auth_rc=0
-	auth_status=$(run_with_timeout 15 "$claude_bin" auth status --json 2>/dev/null) || auth_rc=$?
+	# `</dev/null`: the Claude CLI reads stdin. Without it, a caller that is
+	# still going to prompt the user (setup.sh) has its own stdin drained
+	# here, and the later `read` sees EOF instead of the human's answer.
+	auth_status=$(run_with_timeout 15 "$claude_bin" auth status --json </dev/null 2>/dev/null) || auth_rc=$?
 	if [ "$auth_rc" -ne 0 ]; then
 		print_error "Claude subscription auth not available"
 		echo "Run: claude auth login" >&2
@@ -267,6 +270,10 @@ require_subscription_auth() {
 run_claude_subscription_trigger() {
 	local claude_bin="${1:-claude}"
 
+	# `</dev/null`: the trigger prompt is passed as an argument, so this
+	# invocation needs no stdin - but the Claude CLI reads stdin anyway and
+	# would swallow the caller's (e.g. the "Proceed with installation?"
+	# answer piped into setup.sh) before the prompt is ever reached.
 	run_with_timeout 15 "$claude_bin" \
 		-p \
 		--safe-mode \
@@ -274,7 +281,7 @@ run_claude_subscription_trigger() {
 		--max-turns 1 \
 		--tools "" \
 		--output-format text \
-		"Reply exactly: OK"
+		"Reply exactly: OK" </dev/null
 }
 
 # Resolve the daemon path a scheduler unit should invoke, given the lib

@@ -85,6 +85,9 @@ Each trigger sends a tiny one-turn prompt to Claude Code's cheapest model alias,
 **Can I change the timing?**
 No. ccblocks now uses fixed 5-minute polling. Use `ccblocks pause` and `ccblocks resume` to control when it runs.
 
+**Can I run setup or uninstall from a script?**
+Yes, but pass the flag: `ccblocks setup --yes` and `ccblocks uninstall --force`. Both commands prompt `[Y/n]` and default to yes when you press Enter — but pressing Enter is an *answer*, and a provisioning script, Dockerfile, or CI step has nobody to give one. Run without the flag and with no TTY (stdin closed or detached) and ccblocks does **not** assume consent: it cancels and **exits 2**, so a run that installed or removed nothing is never reported as success. An explicit `n` is still a user decision and exits 0. (Declining at the "remove configuration directory?" prompt is the exception: preserving the config and finishing the uninstall is the correct outcome, so that path exits 0 too.)
+
 **Why not just use cron or a bash loop?**
 
 You *can* - many users successfully schedule triggers with:

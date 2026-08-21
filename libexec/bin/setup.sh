@@ -152,13 +152,29 @@ main() {
 	if [ "$assume_yes" = false ]; then
 		echo ""
 		print_warning "Ready to install ccblocks (triggers every ${CCBLOCKS_INTERVAL_MINUTES} minutes)"
-		# A closed/EOF stdin must fall through to the documented
-		# default-yes rather than tripping the ERR trap. `read` still
-		# assigns what it consumed before hitting EOF (empty on an
-		# immediate EOF), so `|| true` is set -u safe AND preserves an
-		# unterminated answer like `printf n`; `|| confirm=""` would
-		# discard that "no" and install anyway.
-		read -r -p "Proceed with installation? [Y/n]: " confirm || true
+		# `read` returns non-zero at EOF even when it already assigned a
+		# partial line (`printf n`), so the exit status alone cannot tell
+		# "nobody answered" from "answered without a trailing newline".
+		# Record it and let the answer itself break the tie.
+		local confirm=""
+		local answered=true
+		read -r -p "Proceed with installation? [Y/n]: " confirm || answered=false
+
+		# EOF with no answer at all: nobody is there to consent. --yes is
+		# the supported non-interactive path.
+		#
+		# Exit 2, not 0: an explicit "n" is a user decision, but "nobody
+		# could answer" is an environment condition. A provisioning script
+		# or Dockerfile running `ccblocks setup` with stdin detached must
+		# not be told the install succeeded when nothing was installed.
+		#
+		# print_warning, not print_status: the audience for a non-zero exit
+		# is precisely the caller that discards stdout and keeps stderr, so
+		# the "--yes" remediation has to be on stderr to reach it.
+		if [ "$answered" = false ] && [ -z "$confirm" ]; then
+			print_warning "Setup cancelled (no answer on stdin - use --yes to install non-interactively)"
+			exit 2
+		fi
 
 		# Default to yes if empty, or if user explicitly said no
 		if [[ "$confirm" =~ ^[Nn]([Oo])?$ ]]; then
