@@ -56,10 +56,10 @@ jobs:
           VERSION: ${{ steps.get_version.outputs.version }}
         run: |
           if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Tag v${VERSION} already exists"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "Tag v${VERSION} does not exist"
           fi
 
@@ -86,18 +86,20 @@ jobs:
           # Get commits since last tag (or all if no previous tag)
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 
-          if [ -n "$LAST_TAG" ]; then
-            COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
-            echo "## Changes since ${LAST_TAG}" > changelog.md
-          else
-            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
-            echo "## Initial Release" > changelog.md
-          fi
+          {
+            if [ -n "$LAST_TAG" ]; then
+              COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
+              echo "## Changes since ${LAST_TAG}"
+            else
+              COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+              echo "## Initial Release"
+            fi
 
-          echo "" >> changelog.md
-          echo "$COMMITS" >> changelog.md
-          echo "" >> changelog.md
-          echo "**Full Changelog**: https://github.com/${REPOSITORY}/commits/v${VERSION}" >> changelog.md
+            echo ""
+            echo "$COMMITS"
+            echo ""
+            echo "**Full Changelog**: https://github.com/${REPOSITORY}/commits/v${VERSION}"
+          } > changelog.md
 
           cat changelog.md
 

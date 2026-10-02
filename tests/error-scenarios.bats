@@ -622,6 +622,14 @@ exit 1
 EOF
     chmod +x "$mock_bin/logger"
 
+    # Keep this logger-failure test isolated from a developer's installed
+    # ccusage binary, which may contact external state or block interactively.
+    cat > "$mock_bin/ccusage" << 'EOF'
+#!/usr/bin/env bash
+echo "Active block"
+EOF
+    chmod +x "$mock_bin/ccusage"
+
     # Run with mocked commands in PATH
     PATH="$mock_bin:$PATH" run "${PROJECT_ROOT}/libexec/ccblocks-daemon.sh"
     # Should still succeed even if logger fails

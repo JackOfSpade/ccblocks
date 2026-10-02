@@ -63,7 +63,7 @@ jobs:
           curl -fsSLo /tmp/homebrew-install.sh https://raw.githubusercontent.com/Homebrew/install/93a25fd2d2fdb86422303c292b9223f84ef23eaf/install.sh
           echo "17f204b128869ec71e6b650051f1e65ef5b74cf994c2ff8b919103241554dd2f  /tmp/homebrew-install.sh" | sha256sum -c
           /bin/bash /tmp/homebrew-install.sh </dev/null
-          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+          echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
           eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
       - name: Install dependencies
