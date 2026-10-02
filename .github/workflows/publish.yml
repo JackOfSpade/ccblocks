@@ -15,6 +15,7 @@ jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # workflow_dispatch is accepted alongside push because auto-merge-to-main.yml
     # has to dispatch Test on main by hand (a GITHUB_TOKEN push raises no push
     # event). The trust property is unchanged: dispatching a workflow on this
@@ -68,6 +69,7 @@ jobs:
     needs: validate
     if: needs.validate.outputs.tag_exists == 'false'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
 
