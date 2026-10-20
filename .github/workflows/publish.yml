@@ -76,6 +76,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -125,6 +127,21 @@ jobs:
             echo "Tag v${VERSION} already exists, skipping"
           fi
 
+      - name: Package the tested source and record its checksum
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          git archive --format=tar.gz --prefix="ccblocks-${VERSION}/" \
+            --output="release/ccblocks-${VERSION}.tar.gz" HEAD
+          (cd release && sha256sum "ccblocks-${VERSION}.tar.gz" > SHA256SUMS)
+
+      - name: Attest the tested release archive
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/*.tar.gz
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
@@ -133,6 +150,9 @@ jobs:
           body_path: changelog.md
           draft: false
           prerelease: false
+          files: |
+            release/*.tar.gz
+            release/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
